@@ -2,166 +2,336 @@ import subprocess
 import os
 import glob
 import sys
+import json # For parsing ffprobe output
+import re   # For parsing time strings
 
-def download_and_cut_segments(youtube_url, segments, output_base_name, cleanup_full_video=True):
+# --- Helper Function to Parse Time String to Seconds ---
+def time_str_to_seconds(time_str):
+    """Converts HH:MM:SS.ms, MM:SS.ms, or SS.ms string to seconds."""
+    if isinstance(time_str, (int, float)): # Already seconds
+        return float(time_str)
+    
+    time_str = str(time_str).strip()
+    parts = time_str.split(':')
+    try:
+        if len(parts) == 3: # HH:MM:SS.ms
+            h, m, s = parts
+            return int(h) * 3600 + int(m) * 60 + float(s)
+        elif len(parts) == 2: # MM:SS.ms
+            m, s = parts
+            return int(m) * 60 + float(s)
+        elif len(parts) == 1: # SS.ms
+            return float(parts[0])
+        else:
+            raise ValueError("Invalid time format")
+    except ValueError:
+        print(f"Warning: Could not parse time string '{time_str}'. Returning 0.")
+        return 0.0 # Or raise a more specific error
+
+# --- Helper Function to Get Video Duration ---
+def get_video_duration(filepath):
+    """Gets the duration of a video file using ffprobe."""
+    if not os.path.exists(filepath):
+        print(f"Error: File not found for duration check: {filepath}")
+        return None
+
+    cmd = [
+        "ffprobe",
+        "-v", "error",                  # Hide informational messages
+        "-show_entries", "format=duration", # Only get the duration
+        "-of", "default=noprint_wrappers=1:nokey=1", # Output only the value
+        # Alternative using JSON output (more robust parsing)
+        # "-print_format", "json",
+        # "-show_format",
+        filepath
+    ]
+    try:
+        process = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        duration_str = process.stdout.strip()
+        if not duration_str or duration_str.lower() == 'n/a':
+             # Fallback attempt if simple duration fails (e.g., complex formats)
+             cmd_json = [
+                 "ffprobe", "-v", "error", "-print_format", "json",
+                 "-show_format", "-show_streams", filepath
+             ]
+             process_json = subprocess.run(cmd_json, check=True, capture_output=True, text=True)
+             data = json.loads(process_json.stdout)
+             if 'format' in data and 'duration' in data['format']:
+                 return float(data['format']['duration'])
+             else:
+                 print(f"Warning: Could not determine duration from ffprobe output for {filepath}.")
+                 return None # Indicate failure
+        return float(duration_str)
+    except FileNotFoundError:
+        print("\nError: ffprobe command not found.")
+        print("Please ensure ffmpeg (which includes ffprobe) is installed and in your system's PATH.")
+        return None # Indicate failure
+    except subprocess.CalledProcessError as e:
+        print(f"\nError running ffprobe for '{filepath}':")
+        print(f"Command: {' '.join(e.cmd)}")
+        print(f"Return Code: {e.returncode}")
+        print(f"Stderr:\n{e.stderr}")
+        return None # Indicate failure
+    except ValueError:
+        print(f"Warning: Could not convert ffprobe duration output '{duration_str}' to float for {filepath}.")
+        return None # Indicate failure
+    except Exception as e:
+        print(f"\nAn unexpected error occurred during ffprobe execution: {e}")
+        return None # Indicate failure
+
+
+def download_and_cut_segments(youtube_url, segments, output_base_name, cleanup_full_video=True, use_accurate_cutting=False):
     """
     Downloads a full YouTube video and cuts specified time segments using ffmpeg.
 
     Args:
         youtube_url (str): The URL of the YouTube video.
         segments (list): A list of tuples or lists, where each inner element
-                         is a pair of strings representing the start and end
-                         time of a segment (e.g., [("0:00", "0:05"), ("0:15", "0:30")]).
+                         is a pair of strings/numbers representing the start and end
+                         time of a segment (e.g., [("0:00", 5), ("15", "0:30")]).
                          Time format can be HH:MM:SS, MM:SS, or seconds.
-        output_base_name (str): The base name for the output files (e.g., "my_video").
-                                Segments will be named like my_video_segment_1.mp4, etc.
-                                The full video will be named like my_video_full.mp4 (if not cleaned up).
-        cleanup_full_video (bool): If True, the full downloaded video file
-                                   will be removed after cutting the segments.
-                                   Defaults to True.
+        output_base_name (str): The base name for the output files.
+        cleanup_full_video (bool): If True, remove the full downloaded video.
+        use_accurate_cutting (bool): If True, use slower re-encoding for frame-accurate
+                                     cuts. If False (default), use fast '-c copy' which
+                                     may result in slightly inaccurate segment lengths
+                                     due to keyframe limitations.
     """
 
-    # --- Step 1: Download the full video ---
-    # Use a template for the full video filename. %(ext)s will be replaced by yt-dlp
+    # --- Step 1: Download --- (Keep your existing robust download logic)
     full_video_template = f"{output_base_name}_full.%(ext)s"
-    # We'll use glob to find the exact filename after download
     full_video_pattern = f"{output_base_name}_full.*"
 
     print(f"Attempting to download full video from {youtube_url}...")
+    # ... (rest of your yt-dlp download and file finding logic remains the same) ...
+    # Make sure 'downloaded_path' is correctly set after this block
+    # Example placeholder for the download logic result:
+    # downloaded_path = "path/to/your/downloaded/video.ext" # This needs to be set by your download code
 
-    # yt-dlp command
-    # -o specifies the output template
+    # --- (Copying the download block from your previous working version) ---
+    print(f"Output template: {full_video_template}")
+    print(f"File search pattern: {full_video_pattern}")
     download_cmd = [sys.executable, "-m", "yt_dlp", "-o", full_video_template, youtube_url]
-
+    downloaded_path = None
     try:
-        # Execute the command
-        # capture_output=True and text=True are useful for debugging if needed
-        # check=True will raise CalledProcessError if the command fails
         process = subprocess.run(download_cmd, check=True, capture_output=True, text=True)
-        print("Full video download command executed. Checking for file...")
+        print("Full video download command executed successfully.")
+        print(f"Searching for downloaded file matching pattern: '{full_video_pattern}'")
+        downloaded_files = glob.glob(full_video_pattern)
 
-        # --- Find the exact downloaded filename ---
-        # yt-dlp prints the final destination path to stdout
-        # Let's parse the output to be sure, although glob is often sufficient
-        downloaded_path = None
-        for line in process.stdout.splitlines():
-             if "[download] Destination:" in line:
-                 # Extract the path after "Destination: "
-                 downloaded_path = line.split("Destination: ", 1)[-1].strip()
-                 break
-
-        if not downloaded_path:
-             # Fallback to glob if parsing stdout fails (less reliable)
-             print("Could not parse destination path from yt-dlp stdout. Using glob...")
-             downloaded_files = glob.glob(full_video_pattern)
-             if not downloaded_files:
-                 print(f"Error: Could not find the downloaded file matching pattern {full_video_pattern}")
-                 return
-             downloaded_path = downloaded_files[0] # Assume the first match is correct
-             print(f"Found file using glob: {downloaded_path}")
+        if not downloaded_files:
+            # ... (Error handling as before) ...
+            print(f"\nError: Could not find the downloaded file matching pattern '{full_video_pattern}' after successful download command.")
+            # ...(print stdout/stderr etc.) ...
+            return
+        elif len(downloaded_files) > 1:
+            # ... (Multi-file handling as before) ...
+             print(f"Warning: Found multiple files matching pattern '{full_video_pattern}': {downloaded_files}")
+             # Try to use stdout parsing to disambiguate
+             parsed_path = None
+             for line in process.stdout.splitlines():
+                if ("[download] Destination:" in line or
+                    "[Merger] Merging formats into" in line or
+                    "[ExtractAudio] Destination:" in line or
+                    "[VideoConvertor] Destination:" in line):
+                    try:
+                        if '"' in line: candidate = line.split('"')[1]
+                        else: candidate = line.split("Destination: ", 1)[-1].strip()
+                        if os.path.abspath(candidate) in [os.path.abspath(f) for f in downloaded_files]:
+                             parsed_path = candidate
+                             print(f"Prioritizing file mentioned in yt-dlp output: '{parsed_path}'")
+                             break
+                    except IndexError: continue
+             if parsed_path and os.path.exists(parsed_path): downloaded_path = parsed_path
+             else:
+                downloaded_path = downloaded_files[0]
+                print(f"Using the first file found by glob: {downloaded_path}")
         else:
-             print(f"Downloaded file destination: {downloaded_path}")
+            downloaded_path = downloaded_files[0]
+            print(f"Found downloaded file using glob: {downloaded_path}")
 
-
+        if not downloaded_path or not os.path.exists(downloaded_path):
+             print(f"\nError: Could not definitively determine or locate the downloaded video file.")
+             print(f"Path determined: {downloaded_path}")
+             print(f"Files matching pattern '{full_video_pattern}': {glob.glob(full_video_pattern)}")
+             return
+    # ... (Rest of your exception handling for download) ...
     except FileNotFoundError:
-        print("\nError: yt-dlp command not found.")
-        print("Please ensure yt-dlp is installed (`pip install yt-dlp`)")
-        print("and that your Python environment's scripts directory is in your PATH.")
+        print("\nError: Required command (python or yt-dlp) not found.")
         return
     except subprocess.CalledProcessError as e:
         print(f"\nError during yt-dlp download:")
-        print(f"Command: {' '.join(e.cmd)}")
-        print(f"Return Code: {e.returncode}")
-        print(f"Stdout:\n{e.stdout}")
-        print(f"Stderr:\n{e.stderr}")
+        print(f"Stderr:\n{e.stderr}") # Often more useful than stdout on error
         return
     except Exception as e:
-        print(f"\nAn unexpected error occurred during download: {e}")
+        print(f"\nAn unexpected error occurred during download phase: {e}")
         return
+    # --- End Download Block ---
+
+
+    # --- Step 1.5: Get Full Video Duration ---
+    print(f"\nGetting duration of '{downloaded_path}'...")
+    full_duration = get_video_duration(downloaded_path)
+
+    if full_duration is None:
+        print("Error: Could not get video duration. Cannot proceed with segment cutting.")
+        # Optional: Clean up downloaded file if desired, even on error
+        if cleanup_full_video and os.path.exists(downloaded_path):
+            try: os.remove(downloaded_path)
+            except OSError as e: print(f"Error removing video file during cleanup: {e}")
+        return
+
+    print(f"Full video duration: {full_duration:.2f} seconds")
 
 
     # --- Step 2: Cut segments using ffmpeg ---
     print(f"\nCutting segments from '{downloaded_path}'...")
+    if not use_accurate_cutting:
+        print("Note: Using fast cutting (-c copy). Segment durations might be approximate due to keyframe alignment.")
+    else:
+        print("Note: Using accurate cutting (re-encoding). This will be slower.")
 
-    # Check if the full video file exists before trying to cut
-    if not os.path.exists(downloaded_path):
-        print(f"Error: Full video file '{downloaded_path}' not found after download.")
-        return
 
-    # Determine output file extension. Assume same as input or force .mp4 for copy
-    input_ext = os.path.splitext(downloaded_path)[1]
-    output_ext = ".mp4" # Using mp4 as it's common and works well with -c copy
+    output_ext = ".mp4" # Force mp4 for segments
+    ffmpeg_errors = False
 
-    for i, (start_time, end_time) in enumerate(segments):
+    for i, (start_time_req, end_time_req) in enumerate(segments):
         segment_output_name = f"{output_base_name}_segment_{i+1}{output_ext}"
-        print(f"  Cutting segment {i+1}: {start_time} to {end_time} into '{segment_output_name}'")
-
-        # ffmpeg command for cutting
-        # -i input file
-        # -ss start time
-        # -to end time (alternative: -t duration)
-        # -c copy copies streams without re-encoding (fast, preserves quality, but cut points might be approximate)
-        cut_cmd = [
-            "ffmpeg",
-            "-i", downloaded_path,
-            "-ss", str(start_time), # Ensure times are strings
-            "-to", str(end_time),
-            "-c", "copy",
-            segment_output_name
-        ]
 
         try:
+            # Convert requested times to seconds for validation
+            start_sec = time_str_to_seconds(start_time_req)
+            end_sec = time_str_to_seconds(end_time_req)
+
+            # --- Validation Checks ---
+            if start_sec < 0 or end_sec < 0:
+                print(f" Skipping segment {i+1}: Invalid negative time requested ({start_time_req} to {end_time_req}).")
+                continue # Skip to next segment
+
+            if start_sec >= end_sec:
+                 print(f" Skipping segment {i+1}: Start time ({start_time_req}) is not before end time ({end_time_req}).")
+                 continue
+
+            if start_sec >= full_duration:
+                print(f" Skipping segment {i+1}: Start time ({start_time_req} / {start_sec:.2f}s) is beyond video duration ({full_duration:.2f}s).")
+                continue
+
+            # Adjust end_sec if it exceeds duration, and inform the user
+            effective_end_sec = end_sec
+            if end_sec > full_duration:
+                print(f" Warning for segment {i+1}: Requested end time ({end_time_req} / {end_sec:.2f}s) exceeds video duration ({full_duration:.2f}s). Cutting until the end.")
+                effective_end_sec = full_duration # Cut until the actual end
+
+            print(f" Cutting segment {i+1}: {start_time_req} to {end_time_req} (effective: {start_sec:.2f}s to {effective_end_sec:.2f}s) into '{segment_output_name}'")
+
+
+            # --- Build the ffmpeg command ---
+            if use_accurate_cutting:
+                # Accurate (re-encoding) command
+                 cut_cmd = [
+                    "ffmpeg",
+                    "-y", # Overwrite output
+                    "-i", downloaded_path,      # Input file *first*
+                    "-ss", str(start_sec),      # Start time *after* input for accuracy
+                    "-to", str(effective_end_sec), # End time
+                    # Choose your re-encoding options (examples)
+                    "-c:v", "libx264",       # Video codec
+                    "-preset", "fast",       # Speed/compression trade-off
+                    "-crf", "22",            # Quality (lower means better/larger)
+                    "-c:a", "aac",           # Audio codec
+                    "-b:a", "128k",          # Audio bitrate
+                    segment_output_name
+                ]
+            else:
+                 # Fast (stream copy) command
+                 cut_cmd = [
+                    "ffmpeg",
+                    "-y", # Overwrite output
+                    "-ss", str(start_sec), # Start time *before* input for speed
+                    "-i", downloaded_path,
+                    "-to", str(effective_end_sec), # End time
+                    "-c", "copy",          # Stream copy
+                    "-avoid_negative_ts", "make_zero",
+                    segment_output_name
+                 ]
+
             # Execute the ffmpeg command
-            subprocess.run(cut_cmd, check=True, capture_output=True, text=True)
-            print(f"  Successfully created '{segment_output_name}'")
+            process_ffmpeg = subprocess.run(cut_cmd, check=True, capture_output=True, text=True)
+            print(f" Successfully created '{segment_output_name}'")
+
+            # Optional: Check actual duration of the created segment
+            segment_duration = get_video_duration(segment_output_name)
+            if segment_duration is not None:
+                 expected_duration = effective_end_sec - start_sec
+                 print(f"   Actual segment duration: {segment_duration:.2f}s (Expected: ~{expected_duration:.2f}s)")
+                 # Add a warning if using -c copy and duration differs significantly
+                 if not use_accurate_cutting and abs(segment_duration - expected_duration) > 1.0: # Example threshold: 1 second difference
+                     print(f"   Warning: Actual duration differs significantly from expected, likely due to '-c copy' and keyframes.")
+
 
         except FileNotFoundError:
-            print("\nError: ffmpeg command not found.")
+            print("\nError: ffmpeg/ffprobe command not found.")
             print("Please ensure ffmpeg is installed and in your system's PATH.")
-            # If ffmpeg isn't found, no further segments can be cut.
-            return
+            ffmpeg_errors = True
+            break # Cannot continue without ffmpeg/ffprobe
         except subprocess.CalledProcessError as e:
-            print(f"\nError cutting segment {i+1} ('{segment_output_name}'):")
+            print(f"\nError processing segment {i+1} ('{segment_output_name}'):")
             print(f"Command: {' '.join(e.cmd)}")
             print(f"Return Code: {e.returncode}")
-            print(f"Stdout:\n{e.stdout}")
-            print(f"Stderr:\n{e.stderr}")
-            # Decide if you want to stop or try to cut the next segment
-            # For now, let's continue trying to cut the other segments
-            print("  Continuing with next segment (if any)...")
+            print(f"Stderr:\n{e.stderr}") # Stderr is usually most informative
+            ffmpeg_errors = True
+            print(" Continuing with next segment (if any)...")
         except Exception as e:
-             print(f"\nAn unexpected error occurred during segment cutting: {e}")
-             print("  Continuing with next segment (if any)...")
+            print(f"\nAn unexpected error occurred during segment processing for {segment_output_name}: {e}")
+            import traceback
+            traceback.print_exc() # Print full traceback for unexpected errors
+            ffmpeg_errors = True
+            print(" Continuing with next segment (if any)...")
 
 
-    # --- Step 3: Clean up the full video file (Optional) ---
-    if cleanup_full_video and os.path.exists(downloaded_path):
-        print(f"\nCleaning up full video file: '{downloaded_path}'...")
-        try:
-            os.remove(downloaded_path)
-            print("Full video file removed.")
-        except OSError as e:
-            print(f"Error removing full video file '{downloaded_path}': {e}")
+    # --- Step 3: Clean up --- (Keep your existing cleanup logic)
+    if cleanup_full_video:
+         if downloaded_path and os.path.exists(downloaded_path):
+            print(f"\nCleaning up full video file: '{downloaded_path}'...")
+            try:
+                os.remove(downloaded_path)
+                print("Full video file removed.")
+            except OSError as e:
+                print(f"Error removing full video file '{downloaded_path}': {e}")
+         elif downloaded_path:
+             print(f"\nCleanup skipped: Full video file '{downloaded_path}' not found.")
+         else:
+             print("\nCleanup skipped: Full video path was not determined.")
+
 
     print("\nScript finished.")
+    if ffmpeg_errors:
+        print("Warning: One or more errors occurred during segment processing.")
+
 
 # --- Example Usage ---
 if __name__ == "__main__":
-    video_url = "https://www.youtube.com/watch?v=0VdUmQ_XjJg"
+    #video_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw" # Big Buck Bunny (Short: ~1 min)
+    video_url = "https://www.youtube.com/watch?v=0VdUmQ_XjJg" # Your previous example
+    #video_url = "https://www.youtube.com/watch?v=aqz-KE-bpKQ" # Example: Jellyfish (Longer)
 
-    # Define the segments you want to cut
-    # Format: [("start_time1", "end_time1"), ("start_time2", "end_time2"), ...]
-    # Time can be in HH:MM:SS, MM:SS, or seconds (ffmpeg handles various formats)
+    # Define the segments - Use strings or numbers for times
     time_segments = [
-        ("0:00", "0:05"),  # First 5 seconds
-        ("0:15", "0:30"),  # From 15 seconds to 30 seconds
-        # Add more segments here if needed
-        # ("1:00", "1:15"), # From 1 minute to 1 minute 15 seconds
-        # ("65", "70")      # Same as above, using seconds
+        ("0:00", "0:05"),       # First 5 seconds
+        ("0:15", "0:30"),       # 15s to 30s (This might exceed duration in short videos)
+        (65, 75),               # 1m5s to 1m15s (Using seconds)
+        ("01:10", "01:19.5"),   # Example with minutes and fractional seconds
     ]
 
-    # Base name for the output files
-    output_prefix = "barca_mallorca_segments"
+    output_prefix = "test_video_segments"
 
     # Run the function
-    download_and_cut_segments(video_url, time_segments, output_prefix, cleanup_full_video=True)
+    # Set use_accurate_cutting=True for precise cuts (slower)
+    # Set use_accurate_cutting=False for fast cuts (default, potentially imprecise)
+    download_and_cut_segments(
+        video_url,
+        time_segments,
+        output_prefix,
+        cleanup_full_video=True,
+        use_accurate_cutting=True # <<--- CHANGE THIS TO True FOR ACCURACY
+    )
