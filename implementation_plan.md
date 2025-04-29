@@ -38,7 +38,8 @@ To create a unified American Sign Language (ASL) video dataset by merging WLASL 
     *   Reliable internet connection.
 
 ## 3. Target Google Drive Structure
-GDrive:/<Target Base Folder>/CombinedASL/
+GDrive:/Target_Base_Folder/CombinedASL/
+
 ├── videos/ # Contains all final .mp4 video files
 └── combined_asl_metadata.csv # The final metadata file describing video files and splits
 
