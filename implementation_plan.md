@@ -41,6 +41,7 @@ To create a unified American Sign Language (ASL) video dataset by merging WLASL 
 GDrive:/Target_Base_Folder/CombinedASL/
 
 ├── videos/ # Contains all final .mp4 video files
+
 └── combined_asl_metadata.csv # The final metadata file describing video files and splits
 
 ## 4. Implementation Steps & Proposed Scripts
