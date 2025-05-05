@@ -12,7 +12,7 @@ MSASL_TRAIN_JSON = os.path.join(MSASL_DATASET_DIR, 'MSASL_train.json')
 MSASL_VAL_JSON = os.path.join(MSASL_DATASET_DIR, 'MSASL_val.json')
 MSASL_TEST_JSON = os.path.join(MSASL_DATASET_DIR, 'MSASL_test.json')
 
-OUTPUT_CSV = 'combined_sign_language_metadata.csv'
+OUTPUT_CSV = 'combined_asl.csv'
 
 # --- Helper Function to Load JSON ---
 def load_json(filepath):
@@ -173,6 +173,9 @@ for col in final_columns:
 
 # Reorder DataFrame
 df = df[final_columns]
+
+# Populate is_duplicate column
+df['is_duplicate'] = df.duplicated(subset=['url', 'category'], keep='first')
 
 # --- Display Info and Save ---
 print("\n--- Combined DataFrame Info ---")
