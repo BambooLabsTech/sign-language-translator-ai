@@ -177,12 +177,39 @@ df = df[final_columns]
 # Populate is_duplicate column
 df['is_duplicate'] = df.duplicated(subset=['url', 'category', 'frame_start', 'frame_end'], keep='first')
 
+uniqueness_dict = {}
+
+# Populate dict with WLASL first
+for _, row in df.iterrows():
+    if row["dataset_type"] == 'WLASL':
+        key = f"WLASL-{row['category']}-{row['url']}"
+        uniqueness_dict[key] = uniqueness_dict.get(key, 0) + 1
+
+# Check MSASL against WLASL
+for index, row in df.iterrows():
+    if row["dataset_type"] == 'MSASL' and row["is_duplicate"] == False:
+        key = f"WLASL-{row['category']}-{row['url']}"
+        if uniqueness_dict.get(key, 0) > 0:
+            df.at[index, 'is_duplicate'] = True
+
+msasl_total = df[df['dataset_type'] == 'MSASL'].shape[0]
+print(f"Total number of MSASL data: {msasl_total}")
+wlasl_total = df[df['dataset_type'] == 'WLASL'].shape[0]
+print(f"Total number of MSASL data: {wlasl_total}")
+youtube_count = df[(df['dataset_type'] == 'WLASL') & (df['url'].str.contains('youtube', case=False, na=False))].shape[0]
+print(f"Number of youtube occorance on WLASL: {youtube_count}")
+youtube_count_msasl = df[(df['dataset_type'] == 'MSASL') & (df['url'].str.contains('youtube', case=False, na=False))].shape[0]
+print(f"Number of youtube occorance on MSASL: {youtube_count_msasl}")
 # --- Display Info and Save ---
 print("\n--- Combined DataFrame Info ---")
 df.info()
 
 print("\n--- DataFrame Head ---")
 print(df.head())
+
+print("Number of row with is_duplicate==False")
+count = df[df["is_duplicate"] == False].shape[0]
+print(f"Count: {count}")
 
 print("\n--- Value Counts ---")
 print("Dataset Type:")
