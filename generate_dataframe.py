@@ -67,7 +67,7 @@ for entry in tqdm(wlasl_data, desc="Processing WLASL Glosses"):
 
         frame_start_orig = instance['frame_start']
         frame_end_orig = instance['frame_end']
-        frame_start_0based = frame_start_orig - 1
+        frame_start_0based = frame_start_orig
         frame_end_0based_exclusive = frame_end_orig
 
         instance_dict = {
@@ -175,7 +175,7 @@ for col in final_columns:
 df = df[final_columns]
 
 # Populate is_duplicate column
-df['is_duplicate'] = df.duplicated(subset=['url', 'category'], keep='first')
+df['is_duplicate'] = df.duplicated(subset=['url', 'category', 'frame_start', 'frame_end'], keep='first')
 
 # --- Display Info and Save ---
 print("\n--- Combined DataFrame Info ---")
