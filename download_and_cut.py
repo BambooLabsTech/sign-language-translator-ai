@@ -19,7 +19,7 @@ SCRIPT_DIR = Path(__file__).parent # Or set explicitly if needed
 
 # Processing mode: 'test' (random 1000 rows) or 'full' (all rows)
 PROCESSING_MODE = 'test'
-NUM_TEST_ROWS = 200
+NUM_TEST_ROWS = 20
 
 # Add HEADERS for requests fallback
 HEADERS = {
@@ -311,7 +311,7 @@ if __name__ == "__main__":
     # Filter for test mode if enabled
     if PROCESSING_MODE == 'test':
         if len(df) > NUM_TEST_ROWS:
-            df = df.sample(n=NUM_TEST_ROWS, random_state=42) # Use random_state for reproducibility if needed
+            df = df.sample(n=NUM_TEST_ROWS, random_state=43) # Use random_state for reproducibility if needed
             logging.info(f"Running in 'test' mode. Sampled {len(df)} random rows.")
         else:
             logging.info(f"Running in 'test' mode, but dataset has <= {NUM_TEST_ROWS} rows. Processing all {len(df)} rows.")
@@ -504,3 +504,84 @@ if __name__ == "__main__":
     logging.info(f"Failed (download/cut/invalid): {failed_count}")
     logging.info(f"Check {LOG_FILE_PATH} for detailed status of each video.")
     logging.info(f"Check {SCRIPT_DIR / 'processing_debug.log'} for detailed debug logs.")
+
+    # --- Update 'is_valid' in combined_asl.csv ---
+    logging.info(f"Attempting to update 'is_valid' column in {CSV_FILE_PATH} based on {LOG_FILE_PATH}...")
+    try:
+        # Load the main CSV file again to ensure we're working with the full, original data
+        # and to correctly handle the 'is_valid' column type.
+        # Ensure 'id' is read as integer, as it's used for merging/mapping.
+        main_df = pd.read_csv(CSV_FILE_PATH, dtype={'id': int, 'is_valid': object}) # Read 'is_valid' as object to handle existing True/False/NaN
+
+        # Ensure 'is_valid' column exists. If not, create it and default to False.
+        # If it exists, convert existing string 'True'/'False' to boolean and fill NaNs with False.
+        if 'is_valid' not in main_df.columns:
+            main_df['is_valid'] = False
+        else:
+            # Standardize existing 'is_valid' values to boolean, treating blanks/NaNs as False
+            main_df['is_valid'] = main_df['is_valid'].replace({'True': True, 'False': False, True: True, False: False}).fillna(False)
+            # Ensure boolean type after cleaning
+            main_df['is_valid'] = main_df['is_valid'].astype(bool)
+
+
+        if not LOG_FILE_PATH.exists() or LOG_FILE_PATH.stat().st_size == 0:
+            logging.warning(f"Log file {LOG_FILE_PATH} not found or is empty. "
+                            f"'is_valid' column in {CSV_FILE_PATH} will not be updated from this run.")
+        else:
+            log_df = pd.read_csv(LOG_FILE_PATH, dtype={'id': int}) # Ensure 'id' is read as integer
+
+            if 'id' not in log_df.columns or 'status' not in log_df.columns or 'timestamp' not in log_df.columns:
+                logging.error(f"Required columns ('id', 'status', 'timestamp') not found in {LOG_FILE_PATH}. "
+                              f"Cannot update 'is_valid' column.")
+            else:
+                # For each 'id', get its latest status from the log
+                # (in case an ID was processed multiple times, e.g., retries)
+                log_df['timestamp'] = pd.to_datetime(log_df['timestamp'])
+                latest_log_entries = log_df.sort_values('timestamp', ascending=False).drop_duplicates(subset=['id'], keep='first')
+
+                # Create a dictionary: id -> is_valid (True/False)
+                # Only consider statuses that definitively set validity.
+                id_to_valid_status = {}
+                for _, log_row in latest_log_entries.iterrows():
+                    video_id = log_row['id']
+                    status = log_row['status']
+                    if status == 'SUCCESS':
+                        id_to_valid_status[video_id] = True
+                    elif status.startswith('FAILED_') or status == 'INVALID_DATA': # Any failure status
+                        id_to_valid_status[video_id] = False
+                    # Other statuses (e.g., SKIPPED_EXISTING) will not change the 'is_valid' flag from its current state.
+
+                # Apply these updates to the main_df
+                # Create a pandas Series from the dictionary for mapping
+                update_series = pd.Series(id_to_valid_status, name='new_is_valid')
+
+                # Merge this update_series with main_df on 'id'
+                # We'll update 'is_valid' where a new status is available
+                main_df_orig_index = main_df.index # Preserve original index
+                main_df = main_df.set_index('id')
+                
+                # Update 'is_valid' column. `update_series` will align by index (which is 'id' now)
+                # This will overwrite existing 'is_valid' values for matching 'id's.
+                main_df['is_valid'].update(update_series)
+                
+                main_df = main_df.reset_index().set_index(main_df_orig_index).sort_index() # Restore original order if needed
+
+
+                # Ensure the 'is_valid' column is strictly boolean after updates
+                main_df['is_valid'] = main_df['is_valid'].astype(bool)
+
+                logging.info(f"Updated 'is_valid' column in {CSV_FILE_PATH} based on {len(id_to_valid_status)} unique entries in the log.")
+
+        # Save the updated DataFrame back to the CSV file
+        main_df.to_csv(CSV_FILE_PATH, index=False)
+        logging.info(f"Successfully saved updates to {CSV_FILE_PATH}.")
+
+    except FileNotFoundError:
+        logging.error(f"Could not find {CSV_FILE_PATH} or {LOG_FILE_PATH} during the 'is_valid' update step.")
+    except pd.errors.EmptyDataError:
+        logging.error(f"Log file {LOG_FILE_PATH} was empty. Cannot update 'is_valid' based on an empty log.")
+    except KeyError as e:
+        logging.error(f"A required column was missing during 'is_valid' update (e.g., 'id', 'status', 'is_valid'): {e}")
+    except Exception as e:
+        logging.error(f"An unexpected error occurred while updating 'is_valid' in {CSV_FILE_PATH}: {e}")
+        logging.debug(traceback.format_exc()) # traceback is imported globally in your script
