@@ -1,11 +1,7 @@
 import pandas as pd
 import numpy as np
 
-df1 = pd.read_csv('combined_asl_part1.csv')
-df2 = pd.read_csv('combined_asl_part2.csv')
-df3 = pd.read_csv('combined_asl_part3.csv')
-
-df = pd.concat([df1, df2, df3], ignore_index=True)
+df = pd.read_csv('combined_asl_updated.csv')
 
 df_ok = df[(df['is_valid'] == True) & (df['is_duplicate'] == False)].copy()
 df_ok["dataset_split"] = None
