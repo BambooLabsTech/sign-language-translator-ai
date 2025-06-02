@@ -1,4 +1,5 @@
 credentials.json
 token.json
 videos/
-videos/*
+videos/*download_log_part*.csv
+combined_asl_part*.csv
