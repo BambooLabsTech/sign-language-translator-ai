@@ -3,3 +3,4 @@ token.json
 videos/
 videos/*download_log_part*.csv
 combined_asl_part*.csv
+implementation_plan.md
