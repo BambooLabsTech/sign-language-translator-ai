@@ -180,28 +180,30 @@ def build_model(input_shape, num_classes):
     """
     Builds, compiles, and returns the LSTM model.
     """
-    model = Sequential([
-        Input(shape=input_shape, name="input_layer"),
-        # Masking layer ignores padded time steps (where all features are 0.0)
-        Masking(mask_value=0.0, name="masking_layer"),
-        
-        Bidirectional(LSTM(CONFIG["model"]["lstm_units"], return_sequences=True), name="bidirectional_lstm_1"),
-        Dropout(CONFIG["model"]["dropout_rate"]),
-        BatchNormalization(),
-        
-        Bidirectional(LSTM(CONFIG["model"]["lstm_units"], return_sequences=False), name="bidirectional_lstm_2"),
-        Dropout(CONFIG["model"]["dropout_rate"]),
-        BatchNormalization(),
-        
-        Dense(CONFIG["model"]["dense_units"], activation='relu', name="dense_1"),
-        Dense(num_classes, activation='softmax', name="output_layer")
-    ])
+    # Use tf.device to ensure model is built on the specified GPU
+    with tf.device('/GPU:0'):  # This will use the visible GPU (GPU 2 in our case)
+        model = Sequential([
+            Input(shape=input_shape, name="input_layer"),
+            # Masking layer ignores padded time steps (where all features are 0.0)
+            Masking(mask_value=0.0, name="masking_layer"),
+            
+            Bidirectional(LSTM(CONFIG["model"]["lstm_units"], return_sequences=True), name="bidirectional_lstm_1"),
+            Dropout(CONFIG["model"]["dropout_rate"]),
+            BatchNormalization(),
+            
+            Bidirectional(LSTM(CONFIG["model"]["lstm_units"], return_sequences=False), name="bidirectional_lstm_2"),
+            Dropout(CONFIG["model"]["dropout_rate"]),
+            BatchNormalization(),
+            
+            Dense(CONFIG["model"]["dense_units"], activation='relu', name="dense_1"),
+            Dense(num_classes, activation='softmax', name="output_layer")
+        ])
 
-    model.compile(
-        optimizer='adam',
-        loss='sparse_categorical_crossentropy',
-        metrics=['accuracy']
-    )
+        model.compile(
+            optimizer='adam',
+            loss='sparse_categorical_crossentropy',
+            metrics=['accuracy']
+        )
     return model
 
 
