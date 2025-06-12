@@ -14,6 +14,36 @@ from sklearn.preprocessing import LabelEncoder
 import math
 from tqdm import tqdm
 
+# --- GPU CONFIGURATION ---
+# Configure TensorFlow to use specific GPU
+def configure_gpu(gpu_id=2):
+    """
+    Configure TensorFlow to use a specific GPU with memory growth enabled.
+    """
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Restrict TensorFlow to only use the specified GPU
+            tf.config.experimental.set_visible_devices(gpus[gpu_id], 'GPU')
+            
+            # Enable memory growth to avoid allocating all GPU memory at once
+            tf.config.experimental.set_memory_growth(gpus[gpu_id], True)
+            
+            print(f"Configured to use GPU {gpu_id}: {gpus[gpu_id]}")
+            print(f"Memory growth enabled for GPU {gpu_id}")
+            
+            # Verify GPU is available
+            print("Available GPUs:", len(tf.config.experimental.list_physical_devices('GPU')))
+            print("GPU devices:", tf.config.list_logical_devices('GPU'))
+            
+        except RuntimeError as e:
+            print(f"GPU configuration error: {e}")
+    else:
+        print("No GPUs found. Running on CPU.")
+
+# Call GPU configuration at the start
+configure_gpu(gpu_id=2)  # Use GPU 2 (0-based indexing)
+
 # --- 1. CONFIGURATION ---
 # Use this section to easily switch between datasets and model settings.
 
