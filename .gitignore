@@ -6,3 +6,5 @@ combined_asl_part*.csv
 implementation_plan.md
 download_log_*.csv
 download_part*.py
+hand_landmarks_original/
+hand_landmarks_augmented/
