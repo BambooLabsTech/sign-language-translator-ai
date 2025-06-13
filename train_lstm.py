@@ -70,6 +70,7 @@ CONFIG = {
         "coordinates": 3, # x, y, z
     },
     "training": {
+        "top_n_classes": 10,
         "batch_size": 16,
         "epochs": 100,
         "patience": 10, # For EarlyStopping
@@ -79,7 +80,7 @@ CONFIG = {
         "lstm_units": 128,
         "dropout_rate": 0.4,
         "dense_units": 64,
-        "model_save_path": "models/lstm_baseline.h5",
+        "model_save_path": "models/lstm_baseline_top10.h5",
     }
 }
 
@@ -125,9 +126,6 @@ def get_feature_vector_for_frame(frame_data):
 # --- 3. DATA GENERATOR (Keras Sequence) ---
 
 class SignLanguageDataGenerator(Sequence):
-    """
-    Custom data generator to load and process landmark data on-the-fly.
-    """
     def __init__(self, df, batch_size, landmarks_dir, num_classes, shuffle=True):
         self.df = df
         self.batch_size = batch_size
@@ -144,54 +142,54 @@ class SignLanguageDataGenerator(Sequence):
         batch_indices = self.indices[index * self.batch_size:(index + 1) * self.batch_size]
         batch_df = self.df.loc[batch_indices]
 
+        # Build X and y in parallel to avoid mismatches
         X_batch_list = []
-        y_batch = batch_df['label_id'].values
+        y_batch_list = []
 
         for _, row in batch_df.iterrows():
             video_id = row['id']
+            label = row['label_id']
             landmark_path = os.path.join(self.landmarks_dir, f"{video_id}.npy")
             
+            if not os.path.exists(landmark_path):
+                # print(f"Warning: File not found for ID {video_id}. Skipping.")
+                continue
+
             try:
                 video_landmarks = np.load(landmark_path, allow_pickle=True)
                 
-                # --- START OF MODIFICATION ---
-                # Process frames and filter out any that are empty/corrupt
                 frame_vectors = []
                 for frame in video_landmarks:
                     vec = get_feature_vector_for_frame(frame)
-                    # Check if the vector is not all zeros before adding it
-                    if np.any(vec): # np.any is faster than checking sum > 0
+                    if np.any(vec):  # Only add frames with actual data
                         frame_vectors.append(vec)
                 
-                # If after cleaning, the sequence is empty, we should skip it.
-                # (This is an edge case but good to handle).
-                if not frame_vectors:
-                    print(f"Warning: Video ID {video_id} has no valid frames after cleaning. Skipping.")
-                    # This will cause a mismatch in length with y_batch.
-                    # A robust solution would pre-filter the dataframe.
-                    # For now, we'll append a single zero frame to avoid crashing.
-                    frame_vectors.append(np.zeros(FEATURE_DIM))
-                # --- END OF MODIFICATION ---
-                
-                X_batch_list.append(np.array(frame_vectors))
+                # Only use the video if it has valid frames after cleaning
+                if frame_vectors:
+                    X_batch_list.append(np.array(frame_vectors))
+                    y_batch_list.append(label)
+                # else:
+                #     print(f"Warning: Video ID {video_id} has no valid frames. Skipping.")
 
-            except FileNotFoundError:
-                print(f"Warning: File not found for ID {video_id}. Skipping.")
+            except Exception as e:
+                # print(f"Error loading or processing {video_id}: {e}. Skipping.")
                 continue
 
-        # Pad sequences in the batch to the same length
+        # If the entire batch was invalid, return empty arrays
+        if not X_batch_list:
+            return np.array([]), np.array([])
+
         X_padded = tf.keras.preprocessing.sequence.pad_sequences(
             X_batch_list, dtype='float32', padding='post', truncating='post'
         )
         
-        # The y_batch might now mismatch X_padded if we skip files. 
-        # For a robust pipeline, it's better to pre-filter your CSV to ensure all files exist and are valid.
-        # For this fix, assuming file not found is rare, we proceed.
-        return X_padded, y_batch
+        return X_padded, np.array(y_batch_list)
 
     def on_epoch_end(self):
         if self.shuffle:
             np.random.shuffle(self.indices)
+
+
 
 
 # --- 4. MODEL DEFINITION ---
@@ -238,6 +236,15 @@ if __name__ == "__main__":
     # --- Load and Prepare Metadata ---
     df = pd.read_csv(CONFIG["data"]["metadata_file"])
 
+    top_n = CONFIG["training"]["top_n_classes"]
+    if isinstance(top_n, int):
+        print(f"\nFiltering dataset for the top {top_n} most frequent classes...")
+        top_classes = df['category'].value_counts().nlargest(top_n).index.tolist()
+        df = df[df['category'].isin(top_classes)].reset_index(drop=True)
+        print(f"Training with {len(top_classes)} classes: {top_classes}")
+    else:
+        print("\nUsing full dataset...")
+        
     # Create integer labels
     print("\nCreating label encoding...")
     unique_labels = sorted(df['category'].unique())
