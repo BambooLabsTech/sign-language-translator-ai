@@ -225,17 +225,16 @@ def build_model(input_shape, num_classes):
     return model
 
 
-# --- 5. MAIN EXECUTION SCRIPT ---
-
+## --- 5. MAIN EXECUTION SCRIPT ---
 if __name__ == "__main__":
     print("--- Sign Language Recognition LSTM Training ---")
     print(f"Using landmark directory: {CONFIG['data']['landmarks_dir']}")
     print(f"Using features: {CONFIG['features']['components']}")
-    print(f"Calculated feature dimension per frame: {FEATURE_DIM}")
 
     # --- Load and Prepare Metadata ---
     df = pd.read_csv(CONFIG["data"]["metadata_file"])
-
+    
+    # --- NEW FEATURE: Filter for Top N Classes ---
     top_n = CONFIG["training"]["top_n_classes"]
     if isinstance(top_n, int):
         print(f"\nFiltering dataset for the top {top_n} most frequent classes...")
@@ -244,20 +243,17 @@ if __name__ == "__main__":
         print(f"Training with {len(top_classes)} classes: {top_classes}")
     else:
         print("\nUsing full dataset...")
-        
+
     # Create integer labels
     print("\nCreating label encoding...")
     unique_labels = sorted(df['category'].unique())
     label_to_id = {label: i for i, label in enumerate(unique_labels)}
-    id_to_label = {i: label for label, i in label_to_id.items()}
     num_classes = len(unique_labels)
-
     df['label_id'] = df['category'].map(label_to_id)
     
-    # Save the label mapping for later use (e.g., during prediction)
     os.makedirs("models", exist_ok=True)
-    np.save("models/label_mapping.npy", label_to_id)
-    print(f"Found {num_classes} unique sign glosses. Label map saved to 'models/label_mapping.npy'.")
+    np.save(CONFIG["model"]["model_save_path"].replace('.h5', '_label_mapping.npy'), label_to_id)
+    print(f"Found {num_classes} unique sign glosses. Label map saved.")
     
     # --- Split Data ---
     train_df = df[df['dataset_split'] == 'train'].reset_index(drop=True)
@@ -275,7 +271,7 @@ if __name__ == "__main__":
     test_generator = SignLanguageDataGenerator(test_df, CONFIG["training"]["batch_size"], CONFIG["data"]["landmarks_dir"], num_classes, shuffle=False)
     
     # --- Build and Train Model ---
-    input_shape = (None, FEATURE_DIM) # (sequence_length, num_features)
+    input_shape = (None, FEATURE_DIM)
     model = build_model(input_shape, num_classes)
     
     print("\nModel Architecture:")
@@ -283,22 +279,13 @@ if __name__ == "__main__":
     
     # Callbacks
     os.makedirs(os.path.dirname(CONFIG["model"]["model_save_path"]), exist_ok=True)
-    
     checkpoint = ModelCheckpoint(
         filepath=CONFIG["model"]["model_save_path"],
-        monitor='val_accuracy',
-        save_best_only=True,
-        save_weights_only=False,
-        mode='max',
-        verbose=1
+        monitor='val_accuracy', save_best_only=True, mode='max', verbose=1
     )
-    
     early_stopping = EarlyStopping(
-        monitor='val_accuracy',
-        patience=CONFIG["training"]["patience"],
-        mode='max',
-        verbose=1,
-        restore_best_weights=True # Restores the model weights from the epoch with the best value
+        monitor='val_accuracy', patience=CONFIG["training"]["patience"], mode='max',
+        verbose=1, restore_best_weights=True
     )
 
     print("\n--- Starting Training ---")
@@ -312,10 +299,6 @@ if __name__ == "__main__":
 
     # --- Evaluate Model ---
     print("\n--- Evaluating on Test Set ---")
-    # Note: EarlyStopping with restore_best_weights=True means the model already
-    # has the best weights loaded. If it was False, we would load them manually:
-    # model.load_weights(CONFIG["model"]["model_save_path"])
-    
     test_loss, test_accuracy = model.evaluate(test_generator, verbose=1)
     
     print("\n--- Training Complete ---")
