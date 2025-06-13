@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.layers import (
     Input, LSTM, Bidirectional, Dense, Dropout,
     Masking, BatchNormalization
@@ -77,9 +78,9 @@ CONFIG = {
     },
     "model": {
         "type": "lstm",
-        "lstm_units": 128,
-        "dropout_rate": 0.4,
-        "dense_units": 64,
+        "lstm_units": 64,
+        "dropout_rate": 0.5,
+        "dense_units": 32,
         "model_save_path": "models/lstm_baseline_top10.h5",
     }
 }
@@ -288,12 +289,20 @@ if __name__ == "__main__":
         verbose=1, restore_best_weights=True
     )
 
+    reduce_lr = ReduceLROnPlateau(
+        monitor='val_accuracy',
+        factor=0.2,  # Reduce learning rate by a factor of 5 (1.0 -> 0.2)
+        patience=3,  # Reduce if val_accuracy doesn't improve for 3 epochs
+        min_lr=1e-6, # Don't let the learning rate go too low
+        verbose=1
+    )
+
     print("\n--- Starting Training ---")
     history = model.fit(
         train_generator,
         validation_data=val_generator,
         epochs=CONFIG["training"]["epochs"],
-        callbacks=[checkpoint, early_stopping],
+        callbacks=[checkpoint, early_stopping, reduce_lr],
         verbose=1
     )
 
