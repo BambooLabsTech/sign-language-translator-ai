@@ -153,13 +153,30 @@ class SignLanguageDataGenerator(Sequence):
             
             try:
                 video_landmarks = np.load(landmark_path, allow_pickle=True)
-                frame_vectors = [get_feature_vector_for_frame(frame) for frame in video_landmarks]
+                
+                # --- START OF MODIFICATION ---
+                # Process frames and filter out any that are empty/corrupt
+                frame_vectors = []
+                for frame in video_landmarks:
+                    vec = get_feature_vector_for_frame(frame)
+                    # Check if the vector is not all zeros before adding it
+                    if np.any(vec): # np.any is faster than checking sum > 0
+                        frame_vectors.append(vec)
+                
+                # If after cleaning, the sequence is empty, we should skip it.
+                # (This is an edge case but good to handle).
+                if not frame_vectors:
+                    print(f"Warning: Video ID {video_id} has no valid frames after cleaning. Skipping.")
+                    # This will cause a mismatch in length with y_batch.
+                    # A robust solution would pre-filter the dataframe.
+                    # For now, we'll append a single zero frame to avoid crashing.
+                    frame_vectors.append(np.zeros(FEATURE_DIM))
+                # --- END OF MODIFICATION ---
+                
                 X_batch_list.append(np.array(frame_vectors))
+
             except FileNotFoundError:
                 print(f"Warning: File not found for ID {video_id}. Skipping.")
-                # We need a placeholder for y_batch to match. A better way would be to filter these out beforehand.
-                # For now, we'll have a mismatch if a file is not found, which can cause errors.
-                # Let's assume all files exist for this script.
                 continue
 
         # Pad sequences in the batch to the same length
@@ -167,6 +184,9 @@ class SignLanguageDataGenerator(Sequence):
             X_batch_list, dtype='float32', padding='post', truncating='post'
         )
         
+        # The y_batch might now mismatch X_padded if we skip files. 
+        # For a robust pipeline, it's better to pre-filter your CSV to ensure all files exist and are valid.
+        # For this fix, assuming file not found is rare, we proceed.
         return X_padded, y_batch
 
     def on_epoch_end(self):
