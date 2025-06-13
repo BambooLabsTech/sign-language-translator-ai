@@ -48,6 +48,7 @@ configure_gpu(gpu_id=2)  # Use GPU 2 (0-based indexing)
 # --- 1. CONFIGURATION ---
 # Use this section to easily switch between datasets and model settings.
 
+TOP_N_CLASSES = 5
 CONFIG = {
     "data": {
         "metadata_file": "splitted_asl_augmented.csv",
@@ -71,17 +72,17 @@ CONFIG = {
         "coordinates": 3, # x, y, z
     },
     "training": {
-        "top_n_classes": 10,
+        "top_n_classes": TOP_N_CLASSES,
         "batch_size": 16,
         "epochs": 100,
-        "patience": 10, # For EarlyStopping
+        "patience": 15, # For EarlyStopping
     },
     "model": {
         "type": "lstm",
         "lstm_units": 64,
         "dropout_rate": 0.5,
         "dense_units": 32,
-        "model_save_path": "models/lstm_baseline_top10.h5",
+        "model_save_path": f"models/lstm_baseline_{TOP_N_CLASSES}.h5",
     }
 }
 
