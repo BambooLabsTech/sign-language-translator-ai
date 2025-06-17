@@ -51,25 +51,25 @@ configure_gpu(gpu_id=2)  # Use GPU 2 (0-based indexing)
 TOP_N_CLASSES = 10
 CONFIG = {
     "data": {
-        #"metadata_file": "data_v3/metadata_augmented_split.csv",
-        #"landmarks_dir": "data_v3/holistic_landmarks_augmented",
+        "metadata_file": "data_v3/metadata_augmented_split.csv",
+        "landmarks_dir": "data_v3/holistic_landmarks_augmented",
         # To use hands data, change the next two lines:
-        "metadata_file": "data_v3/metadata_augmented_split_hands.csv", # (or non-augmented)
-        "landmarks_dir": "data_v3/hands_landmarks_augmented", # (or non-augmented)
+        #"metadata_file": "data_v3/metadata_augmented_split_hands.csv", # (or non-augmented)
+        #"landmarks_dir": "data_v3/hands_landmarks_augmented", # (or non-augmented)
     },
     "features": {
         # Define which landmark components to use.
         # Options for 'holistic': 'pose', 'face', 'left_hand', 'right_hand'
         # Options for 'hands': 'hand' (representing one hand)
-        #"components": ['pose', 'left_hand', 'right_hand'], # for holistic
-        "components": ['hand'],
+        "components": ['pose', 'left_hand', 'right_hand'], # for holistic
+        #"components": ['hand'],
         "landmark_map": {
             "pose": 33,
             "face": 478,
             "left_hand": 21,
             "right_hand": 21,
-            #"landmarks": 21, # For the 'holistic' dataset
-            "hand": 21 # For 'hands' dataset
+            "landmarks": 21, # For the 'holistic' dataset
+            #"hand": 21 # For 'hands' dataset
         },
         "coordinates": 3, # x, y, z
     },
