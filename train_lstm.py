@@ -184,13 +184,18 @@ class SignLanguageDataGenerator(Sequence):
                 continue
 
         # If the batch is not empty, create the padded sequences and labels.
-        # Otherwise, the empty arrays we initialized at the top will be returned.
         if X_batch_list:
             X_padded = tf.keras.preprocessing.sequence.pad_sequences(
                 X_batch_list, dtype='float32', padding='post', truncating='post'
             )
             y_batch = np.array(y_batch_list, dtype=np.int64)
-        
+        else:
+            # THIS IS THE NEW DEBUGGING PART
+            print(f"\n\nWARNING: Produced an empty batch for index {index}!")
+            print(f"Investigate the following video IDs from your CSV:")
+            print(batch_df['id'].tolist())
+            print("\n\n")
+
         return X_padded, y_batch
 
     def on_epoch_end(self):
