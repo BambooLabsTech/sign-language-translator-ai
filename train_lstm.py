@@ -96,7 +96,7 @@ FEATURE_DIM = sum(CONFIG["features"]["landmark_map"][c] for c in CONFIG["feature
 def get_feature_vector_for_frame(frame_data):
     """
     Extracts and concatenates specified landmark components into a single flat vector.
-    Handles both 'holistic' (dict) and 'hands' (list) data structures.
+    Handles both 'holistic' (dict) and 'hands' (list of dicts/arrays) data structures.
     """
     all_landmarks = []
     for component in CONFIG["features"]["components"]:
@@ -108,21 +108,26 @@ def get_feature_vector_for_frame(frame_data):
         if isinstance(frame_data, dict):
             landmarks = frame_data.get(component)
 
-        # Case 2: Hands data (frame is a list of np.arrays)
+        # Case 2: Hands data (frame is a list)
         elif isinstance(frame_data, list):
-            # If the component we're looking for is 'hand' and hands were detected...
             if component == 'hand' and len(frame_data) > 0:
-                # ...take the first detected hand.
-                landmarks = frame_data[0]
-                # Optional: You could add logic here to combine both hands if two are present.
-                # For a baseline, using the first is simple and effective.
+                # The data could be a dict {'landmarks':...} or just the np.array
+                hand_data = frame_data[0]
+                
+                if isinstance(hand_data, dict):
+                    # Handle the format from original files: [{'landmarks': array}]
+                    landmarks = hand_data.get('landmarks')
+                elif isinstance(hand_data, np.ndarray):
+                    # Handle the format from augmented files: [array]
+                    landmarks = hand_data
 
         # Now, process the extracted landmarks
-        if landmarks is not None and landmarks.shape[0] > 0:
+        # Add a check to ensure landmarks is a numpy array before accessing .shape
+        if isinstance(landmarks, np.ndarray) and landmarks.shape[0] > 0:
             # Flatten (num_landmarks, 3) -> (num_landmarks * 3)
             all_landmarks.append(landmarks[:, :num_coords].flatten())
         else:
-            # If component is missing, append a zero vector of the correct size
+            # If component is missing or not an array, append a zero vector
             all_landmarks.append(np.zeros(num_landmarks * num_coords))
 
     return np.concatenate(all_landmarks)
