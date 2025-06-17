@@ -48,11 +48,11 @@ configure_gpu(gpu_id=2)  # Use GPU 2 (0-based indexing)
 # --- 1. CONFIGURATION ---
 # Use this section to easily switch between datasets and model settings.
 
-TOP_N_CLASSES = 5
+TOP_N_CLASSES = 10
 CONFIG = {
     "data": {
-        "metadata_file": "splitted_asl_augmented.csv",
-        "landmarks_dir": "holistic_landmarks_augmented",
+        "metadata_file": "data_v2/metadata_augmented_split.csv",
+        "landmarks_dir": "data_v2/holistic_landmarks_augmented",
         # To use hands data, change the next two lines:
         # "metadata_file": "splitted_asl_augmented.csv", # (or non-augmented)
         # "landmarks_dir": "hands_landmarks_augmented", # (or non-augmented)
@@ -73,15 +73,15 @@ CONFIG = {
     },
     "training": {
         "top_n_classes": TOP_N_CLASSES,
-        "batch_size": 16,
+        "batch_size": 32,
         "epochs": 100,
-        "patience": 15, # For EarlyStopping
+        "patience": 20, # For EarlyStopping
     },
     "model": {
         "type": "lstm",
-        "lstm_units": 64,
+        "lstm_units": 96,
         "dropout_rate": 0.5,
-        "dense_units": 32,
+        "dense_units": 64,
         "model_save_path": f"models/lstm_baseline_{TOP_N_CLASSES}.h5",
     }
 }
@@ -200,22 +200,23 @@ def build_model(input_shape, num_classes):
     """
     Builds, compiles, and returns the LSTM model.
     """
-    # Use tf.device to ensure model is built on the specified GPU
-    with tf.device('/GPU:0'):  # This will use the visible GPU (GPU 2 in our case)
+    with tf.device('/GPU:0'):
         model = Sequential([
             Input(shape=input_shape, name="input_layer"),
-            # Masking layer ignores padded time steps (where all features are 0.0)
             Masking(mask_value=0.0, name="masking_layer"),
             
+            # A slightly more complex first layer can help capture features
             Bidirectional(LSTM(CONFIG["model"]["lstm_units"], return_sequences=True), name="bidirectional_lstm_1"),
             Dropout(CONFIG["model"]["dropout_rate"]),
             BatchNormalization(),
             
-            Bidirectional(LSTM(CONFIG["model"]["lstm_units"], return_sequences=False), name="bidirectional_lstm_2"),
+            # A simpler second layer
+            Bidirectional(LSTM(CONFIG["model"]["lstm_units"] // 2, return_sequences=False), name="bidirectional_lstm_2"),
             Dropout(CONFIG["model"]["dropout_rate"]),
             BatchNormalization(),
             
             Dense(CONFIG["model"]["dense_units"], activation='relu', name="dense_1"),
+            Dropout(CONFIG["model"]["dropout_rate"] / 2), # Add dropout after dense layer
             Dense(num_classes, activation='softmax', name="output_layer")
         ])
 
@@ -293,7 +294,7 @@ if __name__ == "__main__":
     reduce_lr = ReduceLROnPlateau(
         monitor='val_accuracy',
         factor=0.2,  # Reduce learning rate by a factor of 5 (1.0 -> 0.2)
-        patience=3,  # Reduce if val_accuracy doesn't improve for 3 epochs
+        patience=7,  # Reduce if val_accuracy doesn't improve for 3 epochs
         min_lr=1e-6, # Don't let the learning rate go too low
         verbose=1
     )
@@ -309,6 +310,9 @@ if __name__ == "__main__":
 
     # --- Evaluate Model ---
     print("\n--- Evaluating on Test Set ---")
+    # --- MODIFIED: Load the best model before final evaluation ---
+    print("Loading best model weights from checkpoint...")
+    model.load_weights(CONFIG["model"]["model_save_path"])
     test_loss, test_accuracy = model.evaluate(test_generator, verbose=1)
     
     print("\n--- Training Complete ---")
