@@ -51,11 +51,11 @@ configure_gpu(gpu_id=2)  # Use GPU 2 (0-based indexing)
 TOP_N_CLASSES = 10
 CONFIG = {
     "data": {
-        #"metadata_file": "data_v2/metadata_augmented_split.csv",
-        #"landmarks_dir": "data_v2/holistic_landmarks_augmented",
+        "metadata_file": "data_v3/metadata_augmented_split.csv",
+        "landmarks_dir": "data_v3/holistic_landmarks_augmented",
         # To use hands data, change the next two lines:
-        "metadata_file": "data_v3/metadata_augmented_split.csv", # (or non-augmented)
-        "landmarks_dir": "data_v3/hands_landmarks_augmented", # (or non-augmented)
+        #"metadata_file": "data_v3/metadata_augmented_split.csv", # (or non-augmented)
+        #"landmarks_dir": "data_v3/hands_landmarks_augmented", # (or non-augmented)
     },
     "features": {
         # Define which landmark components to use.
