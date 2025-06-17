@@ -149,10 +149,14 @@ class SignLanguageDataGenerator(Sequence):
         return math.ceil(len(self.df) / self.batch_size)
 
     def __getitem__(self, index):
+        # Initialize return variables as empty numpy arrays with correct rank but zero size.
+        # This prevents rank mismatch errors when a batch is empty.
+        X_padded = np.empty((0, 0, FEATURE_DIM), dtype=np.float32) 
+        y_batch = np.empty((0,), dtype=np.int64)
+
         batch_indices = self.indices[index * self.batch_size:(index + 1) * self.batch_size]
         batch_df = self.df.loc[batch_indices]
 
-        # Build X and y in parallel to avoid mismatches
         X_batch_list = []
         y_batch_list = []
 
@@ -162,38 +166,32 @@ class SignLanguageDataGenerator(Sequence):
             landmark_path = os.path.join(self.landmarks_dir, f"{video_id}.npy")
             
             if not os.path.exists(landmark_path):
-                # print(f"Warning: File not found for ID {video_id}. Skipping.")
                 continue
 
             try:
                 video_landmarks = np.load(landmark_path, allow_pickle=True)
+                if len(video_landmarks) == 0:
+                    continue
+
+                frame_vectors = [vec for frame in video_landmarks if np.any(vec := get_feature_vector_for_frame(frame))]
                 
-                frame_vectors = []
-                for frame in video_landmarks:
-                    vec = get_feature_vector_for_frame(frame)
-                    if np.any(vec):  # Only add frames with actual data
-                        frame_vectors.append(vec)
-                
-                # Only use the video if it has valid frames after cleaning
                 if frame_vectors:
-                    X_batch_list.append(np.array(frame_vectors))
+                    X_batch_list.append(np.array(frame_vectors, dtype=np.float32))
                     y_batch_list.append(label)
-                # else:
-                #     print(f"Warning: Video ID {video_id} has no valid frames. Skipping.")
 
             except Exception as e:
-                # print(f"Error loading or processing {video_id}: {e}. Skipping.")
+                # For debugging: print(f"Error loading or processing {video_id}: {e}. Skipping.")
                 continue
 
-        # If the entire batch was invalid, return empty arrays
-        if not X_batch_list:
-            return np.array([]), np.array([])
-
-        X_padded = tf.keras.preprocessing.sequence.pad_sequences(
-            X_batch_list, dtype='float32', padding='post', truncating='post'
-        )
+        # If the batch is not empty, create the padded sequences and labels.
+        # Otherwise, the empty arrays we initialized at the top will be returned.
+        if X_batch_list:
+            X_padded = tf.keras.preprocessing.sequence.pad_sequences(
+                X_batch_list, dtype='float32', padding='post', truncating='post'
+            )
+            y_batch = np.array(y_batch_list, dtype=np.int64)
         
-        return X_padded, np.array(y_batch_list)
+        return X_padded, y_batch
 
     def on_epoch_end(self):
         if self.shuffle:
