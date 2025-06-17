@@ -60,8 +60,9 @@ CONFIG = {
     "features": {
         # Define which landmark components to use.
         # Options for 'holistic': 'pose', 'face', 'left_hand', 'right_hand'
-        # Options for 'hands': 'landmarks' (representing one hand)
-        "components": ['pose', 'left_hand', 'right_hand'], # We decided to exclude 'face'
+        # Options for 'hands': 'hand' (representing one hand)
+        #"components": ['pose', 'left_hand', 'right_hand'], # We decided to exclude 'face'
+        "components": ['hand'],
         "landmark_map": {
             "pose": 33,
             "face": 478,
@@ -94,28 +95,29 @@ FEATURE_DIM = sum(CONFIG["features"]["landmark_map"][c] for c in CONFIG["feature
 def get_feature_vector_for_frame(frame_data):
     """
     Extracts and concatenates specified landmark components into a single flat vector.
-    Handles missing components by filling with zeros.
+    Handles both 'holistic' (dict) and 'hands' (list) data structures.
     """
     all_landmarks = []
     for component in CONFIG["features"]["components"]:
         num_landmarks = CONFIG["features"]["landmark_map"][component]
         num_coords = CONFIG["features"]["coordinates"]
-        
-        # For holistic data (dict)
+        landmarks = None  # Reset for each component
+
+        # Case 1: Holistic data (frame is a dictionary)
         if isinstance(frame_data, dict):
             landmarks = frame_data.get(component)
-        # For hands data (list of dicts)
-        elif isinstance(frame_data, list):
-            # This logic assumes we want to combine all detected hands in 'hands' data
-            # For a baseline, let's just take the first detected hand if any
-            if component == 'landmarks' and len(frame_data) > 0:
-                landmarks = frame_data[0].get('landmarks')
-            else:
-                landmarks = None
-        else:
-            landmarks = None
 
-        if landmarks is not None:
+        # Case 2: Hands data (frame is a list of np.arrays)
+        elif isinstance(frame_data, list):
+            # If the component we're looking for is 'hand' and hands were detected...
+            if component == 'hand' and len(frame_data) > 0:
+                # ...take the first detected hand.
+                landmarks = frame_data[0]
+                # Optional: You could add logic here to combine both hands if two are present.
+                # For a baseline, using the first is simple and effective.
+
+        # Now, process the extracted landmarks
+        if landmarks is not None and landmarks.shape[0] > 0:
             # Flatten (num_landmarks, 3) -> (num_landmarks * 3)
             all_landmarks.append(landmarks[:, :num_coords].flatten())
         else:
