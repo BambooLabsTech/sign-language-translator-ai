@@ -61,14 +61,15 @@ CONFIG = {
         # Define which landmark components to use.
         # Options for 'holistic': 'pose', 'face', 'left_hand', 'right_hand'
         # Options for 'hands': 'hand' (representing one hand)
-        #"components": ['pose', 'left_hand', 'right_hand'], # We decided to exclude 'face'
+        #"components": ['pose', 'left_hand', 'right_hand'], # for holistic
         "components": ['hand'],
         "landmark_map": {
             "pose": 33,
             "face": 478,
             "left_hand": 21,
             "right_hand": 21,
-            "landmarks": 21, # For the 'hands' dataset
+            #"landmarks": 21, # For the 'holistic' dataset
+            "hand": 21 # For 'hands' dataset
         },
         "coordinates": 3, # x, y, z
     },
