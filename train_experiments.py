@@ -157,25 +157,31 @@ class SignLanguageGenerator(Sequence):
                 if video_landmarks.size == 0:
                     continue
 
-                processed_vectors = []
-                last_valid_vector = None 
+                # 1. First, extract all frame vectors from the file.
+                all_vectors = [get_feature_vector(frame, self.components) for frame in video_landmarks]
+                if not all_vectors:
+                    continue # Skip if the npy file was empty
 
-                for frame in video_landmarks:
-                    current_vector = get_feature_vector(frame, self.components)
-                    is_valid = not np.all(current_vector == 0)
+                # 2. Perform a forward-fill to handle zero-vectors.
+                # This ensures that frames masked during augmentation are filled with the last known position.
+                last_valid_vector = None
+                for i in range(len(all_vectors)):
+                    if not np.all(all_vectors[i] == 0):
+                        last_valid_vector = all_vectors[i] # Update the last known valid frame
+                    elif last_valid_vector is not None:
+                        all_vectors[i] = last_valid_vector # Fill the current zero-frame
 
-                    if last_valid_vector is None:
-                        if is_valid:
-                            processed_vectors.append(current_vector)
-                            last_valid_vector = current_vector
-                    else:
-                        if is_valid:
-                            processed_vectors.append(current_vector)
-                            last_valid_vector = current_vector
-                        else:
-                            processed_vectors.append(last_valid_vector)
+                # 3. Trim any leading zero-frames that couldn't be filled.
+                # This happens if a video starts with masked frames.
+                first_valid_idx = -1
+                for i, vec in enumerate(all_vectors):
+                    if not np.all(vec == 0):
+                        first_valid_idx = i
+                        break
                 
-                if processed_vectors:
+                # 4. If any valid frames remain, add the sequence to our batch.
+                if first_valid_idx != -1:
+                    processed_vectors = all_vectors[first_valid_idx:]
                     X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
                     y_batch_list.append(label_id)
 
