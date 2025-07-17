@@ -106,12 +106,11 @@ def get_feature_vector(frame_data, components):
             landmarks = frame_data.get(component)
         elif isinstance(frame_data, list): # Hands data
             if component == 'hand':
-                # For hands, we just take the first available hand in the frame.
-                # A more complex strategy could be used, but this is a robust baseline.
-                if len(frame_data) > 0:
-                    hand_info = frame_data[0]
-                    if 'landmarks' in hand_info:
+                # Iterate through all detected hands in the frame and take the first valid one.
+                for hand_info in frame_data:
+                    if 'landmarks' in hand_info and isinstance(hand_info.get('landmarks'), np.ndarray):
                         landmarks = hand_info['landmarks']
+                        break # Found a valid hand, stop looking
 
         if isinstance(landmarks, np.ndarray) and landmarks.shape == (num_landmarks, COORDINATES):
             feature_vector.append(landmarks.flatten())
@@ -139,70 +138,62 @@ class SignLanguageGenerator(Sequence):
         return math.ceil(len(self.df) / self.batch_size)
 
     def __getitem__(self, index):
-        # --- START OF FIX ---
-        # Loop until a valid, non-empty batch is created.
-        while True:
-            # Get indices for the current batch attempt
-            current_index = index % self.num_batches
-            batch_indices = self.indices[current_index * self.batch_size:(current_index + 1) * self.batch_size]
-            
-            X_batch_list = []
-            y_batch_list = []
+        batch_indices = self.indices[index * self.batch_size:(index + 1) * self.batch_size]
+        
+        X_batch_list = []
+        y_batch_list = []
 
-            for i in batch_indices:
-                row = self.df.loc[i]
-                video_id = str(row['id'])
-                label_id = self.label_map[row['category']]
-                
-                landmark_path = self.landmarks_dir / f"{video_id}.npy"
-                if not landmark_path.exists():
+        for i in batch_indices:
+            row = self.df.loc[i]
+            video_id = str(row['id'])
+            label_id = self.label_map[row['category']]
+            
+            landmark_path = self.landmarks_dir / f"{video_id}.npy"
+            if not landmark_path.exists():
+                continue
+
+            try:
+                video_landmarks = np.load(landmark_path, allow_pickle=True)
+                if video_landmarks.size == 0:
                     continue
 
-                try:
-                    video_landmarks = np.load(landmark_path, allow_pickle=True)
-                    if video_landmarks.size == 0:
-                        continue
+                processed_vectors = []
+                last_valid_vector = None 
 
-                    # Your robust logic for trimming and forward-filling
-                    processed_vectors = []
-                    last_valid_vector = None
+                for frame in video_landmarks:
+                    current_vector = get_feature_vector(frame, self.components)
+                    is_valid = not np.all(current_vector == 0)
 
-                    for frame in video_landmarks:
-                        current_vector = get_feature_vector(frame, self.components)
-                        is_valid = not np.all(current_vector == 0)
-
-                        if last_valid_vector is None:
-                            if is_valid:
-                                processed_vectors.append(current_vector)
-                                last_valid_vector = current_vector
+                    if last_valid_vector is None:
+                        if is_valid:
+                            processed_vectors.append(current_vector)
+                            last_valid_vector = current_vector
+                    else:
+                        if is_valid:
+                            processed_vectors.append(current_vector)
+                            last_valid_vector = current_vector
                         else:
-                            if is_valid:
-                                processed_vectors.append(current_vector)
-                                last_valid_vector = current_vector
-                            else:
-                                processed_vectors.append(last_valid_vector)
-                    
-                    if processed_vectors:
-                        X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
-                        y_batch_list.append(label_id)
+                            processed_vectors.append(last_valid_vector)
+                
+                if processed_vectors:
+                    X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
+                    y_batch_list.append(label_id)
 
-                except Exception as e:
-                    # Silently skip corrupted files
-                    continue
-            
-            # If the batch is successfully created, break the loop and return it.
-            if X_batch_list:
-                X_padded = tf.keras.preprocessing.sequence.pad_sequences(
-                    X_batch_list, dtype='float32', padding='post', truncating='post'
-                )
-                y_batch = np.array(y_batch_list, dtype=np.int64)
-                return X_padded, y_batch
+            except Exception as e:
+                # print(f"Warning: Error processing {video_id}: {e}")
+                continue
+        
+        # If the batch is completely empty after trying all files, return a correctly shaped zero-size batch.
+        if not X_batch_list:
+             return np.zeros((0, 0, self.feature_dim)), np.zeros((0,))
 
-            # If the batch is empty (all files were invalid), increment index and try again.
-            # This prevents an infinite loop on the same bad batch.
-            # print(f"Warning: Produced an empty batch for index {index}. Trying next batch.")
-            index += 1
-            
+        X_padded = tf.keras.preprocessing.sequence.pad_sequences(
+            X_batch_list, dtype='float32', padding='post', truncating='post'
+        )
+        y_batch = np.array(y_batch_list, dtype=np.int64)
+
+        return X_padded, y_batch
+
     def on_epoch_end(self):
         if self.shuffle:
             np.random.shuffle(self.indices)
