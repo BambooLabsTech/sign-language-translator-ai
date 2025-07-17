@@ -158,11 +158,27 @@ class SignLanguageGenerator(Sequence):
                 if video_landmarks.size == 0:
                     continue
 
-                frame_vectors = [get_feature_vector(frame, self.components) for frame in video_landmarks]
+                # --- START OF FIX ---
+                # Apply a forward-fill strategy to handle intermittent missing landmarks
+                processed_vectors = []
+                last_valid_vector = np.zeros(self.feature_dim, dtype=np.float32)
+
+                for frame in video_landmarks:
+                    current_vector = get_feature_vector(frame, self.components)
+                    
+                    # If the entire feature vector is zero, it implies a missing frame.
+                    # Use the last known valid vector instead.
+                    if np.all(current_vector == 0):
+                        processed_vectors.append(last_valid_vector)
+                    else:
+                        processed_vectors.append(current_vector)
+                        last_valid_vector = current_vector # Update the last valid vector
+                # --- END OF FIX ---
                 
-                if frame_vectors:
-                    X_batch_list.append(np.array(frame_vectors, dtype=np.float32))
+                if processed_vectors:
+                    X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
                     y_batch_list.append(label_id)
+
             except Exception as e:
                 # print(f"Warning: Error processing {video_id}: {e}")
                 continue
