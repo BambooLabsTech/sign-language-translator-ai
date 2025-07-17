@@ -139,73 +139,70 @@ class SignLanguageGenerator(Sequence):
         return math.ceil(len(self.df) / self.batch_size)
 
     def __getitem__(self, index):
-        batch_indices = self.indices[index * self.batch_size:(index + 1) * self.batch_size]
-        
-        X_batch_list = []
-        y_batch_list = []
-
-        for i in batch_indices:
-            row = self.df.loc[i]
-            video_id = str(row['id'])
-            label_id = self.label_map[row['category']]
+        # --- START OF FIX ---
+        # Loop until a valid, non-empty batch is created.
+        while True:
+            # Get indices for the current batch attempt
+            current_index = index % self.num_batches
+            batch_indices = self.indices[current_index * self.batch_size:(current_index + 1) * self.batch_size]
             
-            landmark_path = self.landmarks_dir / f"{video_id}.npy"
-            if not landmark_path.exists():
-                continue
+            X_batch_list = []
+            y_batch_list = []
 
-            try:
-                video_landmarks = np.load(landmark_path, allow_pickle=True)
-                if video_landmarks.size == 0:
+            for i in batch_indices:
+                row = self.df.loc[i]
+                video_id = str(row['id'])
+                label_id = self.label_map[row['category']]
+                
+                landmark_path = self.landmarks_dir / f"{video_id}.npy"
+                if not landmark_path.exists():
                     continue
 
-                # --- START OF THE DEFINITIVE FIX ---
-                # This strategy trims leading missing frames and forward-fills intermittent ones.
-                processed_vectors = []
-                last_valid_vector = None # Use None to indicate we haven't found the first valid frame yet
+                try:
+                    video_landmarks = np.load(landmark_path, allow_pickle=True)
+                    if video_landmarks.size == 0:
+                        continue
 
-                for frame in video_landmarks:
-                    current_vector = get_feature_vector(frame, self.components)
-                    
-                    # Check if the current frame is valid (not all zeros)
-                    is_valid = not np.all(current_vector == 0)
+                    # Your robust logic for trimming and forward-filling
+                    processed_vectors = []
+                    last_valid_vector = None
 
-                    if last_valid_vector is None:
-                        # We are at the beginning, waiting for the first valid frame
-                        if is_valid:
-                            # First valid frame found!
-                            processed_vectors.append(current_vector)
-                            last_valid_vector = current_vector
-                        # else: # If not valid, we are still trimming, so do nothing.
-                    
-                    else:
-                        # We are past the beginning of the sequence
-                        if is_valid:
-                            processed_vectors.append(current_vector)
-                            last_valid_vector = current_vector
+                    for frame in video_landmarks:
+                        current_vector = get_feature_vector(frame, self.components)
+                        is_valid = not np.all(current_vector == 0)
+
+                        if last_valid_vector is None:
+                            if is_valid:
+                                processed_vectors.append(current_vector)
+                                last_valid_vector = current_vector
                         else:
-                            # Forward-fill with the last known good frame
-                            processed_vectors.append(last_valid_vector)
-                # --- END OF THE DEFINITIVE FIX ---
-                
-                if processed_vectors:
-                    X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
-                    y_batch_list.append(label_id)
+                            if is_valid:
+                                processed_vectors.append(current_vector)
+                                last_valid_vector = current_vector
+                            else:
+                                processed_vectors.append(last_valid_vector)
+                    
+                    if processed_vectors:
+                        X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
+                        y_batch_list.append(label_id)
 
-            except Exception as e:
-                # print(f"Warning: Error processing {video_id}: {e}")
-                continue
-        
-        if not X_batch_list: # If batch ends up empty
-             return np.zeros((0, 0, self.feature_dim)), np.zeros((0,))
+                except Exception as e:
+                    # Silently skip corrupted files
+                    continue
+            
+            # If the batch is successfully created, break the loop and return it.
+            if X_batch_list:
+                X_padded = tf.keras.preprocessing.sequence.pad_sequences(
+                    X_batch_list, dtype='float32', padding='post', truncating='post'
+                )
+                y_batch = np.array(y_batch_list, dtype=np.int64)
+                return X_padded, y_batch
 
-        # Pad sequences to the length of the longest sequence in the batch
-        X_padded = tf.keras.preprocessing.sequence.pad_sequences(
-            X_batch_list, dtype='float32', padding='post', truncating='post'
-        )
-        y_batch = np.array(y_batch_list, dtype=np.int64)
-
-        return X_padded, y_batch
-
+            # If the batch is empty (all files were invalid), increment index and try again.
+            # This prevents an infinite loop on the same bad batch.
+            # print(f"Warning: Produced an empty batch for index {index}. Trying next batch.")
+            index += 1
+            
     def on_epoch_end(self):
         if self.shuffle:
             np.random.shuffle(self.indices)
