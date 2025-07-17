@@ -158,22 +158,34 @@ class SignLanguageGenerator(Sequence):
                 if video_landmarks.size == 0:
                     continue
 
-                # --- START OF FIX ---
-                # Apply a forward-fill strategy to handle intermittent missing landmarks
+                # --- START OF THE DEFINITIVE FIX ---
+                # This strategy trims leading missing frames and forward-fills intermittent ones.
                 processed_vectors = []
-                last_valid_vector = np.zeros(self.feature_dim, dtype=np.float32)
+                last_valid_vector = None # Use None to indicate we haven't found the first valid frame yet
 
                 for frame in video_landmarks:
                     current_vector = get_feature_vector(frame, self.components)
                     
-                    # If the entire feature vector is zero, it implies a missing frame.
-                    # Use the last known valid vector instead.
-                    if np.all(current_vector == 0):
-                        processed_vectors.append(last_valid_vector)
+                    # Check if the current frame is valid (not all zeros)
+                    is_valid = not np.all(current_vector == 0)
+
+                    if last_valid_vector is None:
+                        # We are at the beginning, waiting for the first valid frame
+                        if is_valid:
+                            # First valid frame found!
+                            processed_vectors.append(current_vector)
+                            last_valid_vector = current_vector
+                        # else: # If not valid, we are still trimming, so do nothing.
+                    
                     else:
-                        processed_vectors.append(current_vector)
-                        last_valid_vector = current_vector # Update the last valid vector
-                # --- END OF FIX ---
+                        # We are past the beginning of the sequence
+                        if is_valid:
+                            processed_vectors.append(current_vector)
+                            last_valid_vector = current_vector
+                        else:
+                            # Forward-fill with the last known good frame
+                            processed_vectors.append(last_valid_vector)
+                # --- END OF THE DEFINITIVE FIX ---
                 
                 if processed_vectors:
                     X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
