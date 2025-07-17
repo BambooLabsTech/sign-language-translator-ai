@@ -183,15 +183,27 @@ class SignLanguageGenerator(Sequence):
                 # print(f"Warning: Error processing {video_id}: {e}")
                 continue
         
-    # If the batch is completely empty after trying all files, return a batch with 0 samples
-        # but a valid (non-zero) time dimension to prevent LSTM errors.
-        if not X_batch_list:
-             return np.zeros((0, 1, self.feature_dim)), np.zeros((0,))
+    # Filter out any zero-length sequences that might have slipped through.
+        # This is the final safeguard before padding.
+        valid_X = [x for x in X_batch_list if len(x) > 0]
+        
+        # We need to get the corresponding labels for the valid sequences.
+        # This is a bit tricky, so we rebuild both lists together.
+        final_X = []
+        final_y = []
+        for x, y in zip(X_batch_list, y_batch_list):
+            if len(x) > 0:
+                final_X.append(x)
+                final_y.append(y)
+
+        # If the batch is STILL empty after all filtering, then we return the failsafe.
+        if not final_X:
+            return np.zeros((0, 1, self.feature_dim)), np.zeros((0,))
 
         X_padded = tf.keras.preprocessing.sequence.pad_sequences(
-            X_batch_list, dtype='float32', padding='post', truncating='post'
+            final_X, dtype='float32', padding='post', truncating='post'
         )
-        y_batch = np.array(y_batch_list, dtype=np.int64)
+        y_batch = np.array(final_y, dtype=np.int64)
 
         return X_padded, y_batch
 
