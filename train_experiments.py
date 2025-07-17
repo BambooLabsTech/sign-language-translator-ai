@@ -204,6 +204,7 @@ class SignLanguageGenerator(Sequence):
 
         # If the batch is STILL empty after all filtering, then we return the failsafe.
         if not final_X:
+            print(f"\n\n--- WARNING: PRODUCED AN ENTIRELY EMPTY BATCH (index: {index}) ---\n\n")
             return np.zeros((0, 1, self.feature_dim)), np.zeros((0,))
 
         X_padded = tf.keras.preprocessing.sequence.pad_sequences(
@@ -211,6 +212,18 @@ class SignLanguageGenerator(Sequence):
         )
         y_batch = np.array(final_y, dtype=np.int64)
 
+        # ======================================================================
+        # --- DEBUGGING BLOCK: This will run ONCE for the first batch ---
+        if not hasattr(self, 'debug_printed'):
+            print("\n\n--- DEBUGGING FIRST BATCH ---")
+            print(f"Batch Index: {index}")
+            print(f"Number of samples in batch: {len(final_X)}")
+            print("Shapes of individual sequences BEFORE padding:")
+            for i, x in enumerate(final_X):
+                print(f"  Sample {i}: {x.shape}")
+            print(f"\nShape of PADDED batch sent to model (Batch, MaxTimesteps, Features): {X_padded.shape}")
+            print("--- END DEBUGGING ---")
+            self.debug_printed = True # Ensure this only prints once
         return X_padded, y_batch
 
     def on_epoch_end(self):
@@ -226,7 +239,6 @@ def build_lstm_model(input_shape, num_classes):
     """Builds and compiles a standard Bidirectional LSTM model."""
     model = Sequential([
         Input(shape=input_shape),
-        Masking(mask_value=0.0),
         Bidirectional(LSTM(96, return_sequences=True)),
         Dropout(0.5),
         BatchNormalization(),
