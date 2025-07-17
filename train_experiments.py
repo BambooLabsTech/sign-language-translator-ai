@@ -137,20 +137,16 @@ class SignLanguageGenerator(Sequence):
     def __len__(self):
         return math.ceil(len(self.df) / self.batch_size)
 
-def __getitem__(self, index):
+    def __getitem__(self, index):
         batch_indices = self.indices[index * self.batch_size:(index + 1) * self.batch_size]
         
         X_batch_list = []
         y_batch_list = []
-        
-        # Keep track of the video IDs in this specific batch for debugging
-        attempted_video_ids = []
 
         for i in batch_indices:
             row = self.df.loc[i]
             video_id = str(row['id'])
             label_id = self.label_map[row['category']]
-            attempted_video_ids.append(video_id)
             
             landmark_path = self.landmarks_dir / f"{video_id}.npy"
             if not landmark_path.exists():
@@ -161,58 +157,78 @@ def __getitem__(self, index):
                 if video_landmarks.size == 0:
                     continue
 
+                # 1. First, extract all frame vectors from the file.
                 all_vectors = [get_feature_vector(frame, self.components) for frame in video_landmarks]
                 if not all_vectors:
-                    continue
+                    continue # Skip if the npy file was empty
 
+                # 2. Perform a forward-fill to handle zero-vectors.
+                # This ensures that frames masked during augmentation are filled with the last known position.
                 last_valid_vector = None
                 for i in range(len(all_vectors)):
                     if not np.all(all_vectors[i] == 0):
-                        last_valid_vector = all_vectors[i]
+                        last_valid_vector = all_vectors[i] # Update the last known valid frame
                     elif last_valid_vector is not None:
-                        all_vectors[i] = last_valid_vector
-                
+                        all_vectors[i] = last_valid_vector # Fill the current zero-frame
+
+                # 3. Trim any leading zero-frames that couldn't be filled.
+                # This happens if a video starts with masked frames.
                 first_valid_idx = -1
                 for i, vec in enumerate(all_vectors):
                     if not np.all(vec == 0):
                         first_valid_idx = i
                         break
                 
+                # 4. If any valid frames remain, add the sequence to our batch.
                 if first_valid_idx != -1:
                     processed_vectors = all_vectors[first_valid_idx:]
                     X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
                     y_batch_list.append(label_id)
 
             except Exception as e:
+                # print(f"Warning: Error processing {video_id}: {e}")
                 continue
         
+    # Filter out any zero-length sequences that might have slipped through.
+        # This is the final safeguard before padding.
+        valid_X = [x for x in X_batch_list if len(x) > 0]
+        
+        # We need to get the corresponding labels for the valid sequences.
+        # This is a bit tricky, so we rebuild both lists together.
         final_X = []
         final_y = []
         for x, y in zip(X_batch_list, y_batch_list):
             if len(x) > 0:
                 final_X.append(x)
                 final_y.append(y)
-        
-        # ======================================================================
-        # --- NEW DEBUGGING BLOCK: Find the problematic files ---
+
+        # If the batch is STILL empty after all filtering, then we return the failsafe.
         if not final_X:
-            print("\n\n" + "="*60)
-            print(f"DEBUG: PRODUCED AN EMPTY BATCH AT INDEX: {index}")
-            print("The following video IDs were processed but all resulted in empty sequences:")
-            print(attempted_video_ids)
-            print("Please inspect one of these .npy files in the augmented directory.")
-            print("For example, try loading:", f"{self.landmarks_dir / (attempted_video_ids[0] + '.npy')}")
-            print("="*60 + "\n\n")
-            # This is the line that causes the crash, but it's triggered by the bad data.
+            print(f"\n\n--- WARNING: PRODUCED AN ENTIRELY EMPTY BATCH (index: {index}) ---\n\n")
             return np.zeros((0, 1, self.feature_dim)), np.zeros((0,))
-        # ======================================================================
 
         X_padded = tf.keras.preprocessing.sequence.pad_sequences(
             final_X, dtype='float32', padding='post', truncating='post'
         )
         y_batch = np.array(final_y, dtype=np.int64)
 
+        # ======================================================================
+        # --- DEBUGGING BLOCK: This will run ONCE for the first batch ---
+        if not hasattr(self, 'debug_printed'):
+            print("\n\n--- DEBUGGING FIRST BATCH ---")
+            print(f"Batch Index: {index}")
+            print(f"Number of samples in batch: {len(final_X)}")
+            print("Shapes of individual sequences BEFORE padding:")
+            for i, x in enumerate(final_X):
+                print(f"  Sample {i}: {x.shape}")
+            print(f"\nShape of PADDED batch sent to model (Batch, MaxTimesteps, Features): {X_padded.shape}")
+            print("--- END DEBUGGING ---")
+            self.debug_printed = True # Ensure this only prints once
         return X_padded, y_batch
+
+    def on_epoch_end(self):
+        if self.shuffle:
+            np.random.shuffle(self.indices)
 
 
 # ==============================================================================
@@ -223,6 +239,7 @@ def build_lstm_model(input_shape, num_classes):
     """Builds and compiles a standard Bidirectional LSTM model."""
     model = Sequential([
         Input(shape=input_shape),
+        Masking(mask_value=0.0),
         Bidirectional(LSTM(96, return_sequences=True)),
         Dropout(0.5),
         BatchNormalization(),
