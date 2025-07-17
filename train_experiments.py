@@ -183,9 +183,10 @@ class SignLanguageGenerator(Sequence):
                 # print(f"Warning: Error processing {video_id}: {e}")
                 continue
         
-        # If the batch is completely empty after trying all files, return a correctly shaped zero-size batch.
+    # If the batch is completely empty after trying all files, return a batch with 0 samples
+        # but a valid (non-zero) time dimension to prevent LSTM errors.
         if not X_batch_list:
-             return np.zeros((0, 0, self.feature_dim)), np.zeros((0,))
+             return np.zeros((0, 1, self.feature_dim)), np.zeros((0,))
 
         X_padded = tf.keras.preprocessing.sequence.pad_sequences(
             X_batch_list, dtype='float32', padding='post', truncating='post'
