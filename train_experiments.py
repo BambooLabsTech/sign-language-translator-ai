@@ -122,13 +122,13 @@ def get_feature_vector(frame_data, components):
 
 class SignLanguageGenerator(Sequence):
     """Keras Sequence to load and process landmark data batch by batch."""
-    def __init__(self, df, config, label_map, batch_size=32, shuffle=True):
+    def __init__(self, df, config, label_map, landmarks_dir, batch_size=32, shuffle=True):
         self.df = df
         self.config = config
         self.label_map = label_map
+        self.landmarks_dir = Path(landmarks_dir)
         self.batch_size = batch_size
         self.shuffle = shuffle
-        self.landmarks_dir = Path(config["landmarks_dir"])
         self.components = config["components"]
         self.feature_dim = sum(LANDMARK_MAP[c] for c in self.components) * COORDINATES
         self.indices = self.df.index.tolist()
@@ -304,9 +304,22 @@ def run_experiment(config, top_n_classes_list):
 
     # --- 2. Create Data Generators ---
     print("\nStep 2: Creating data generators...")
-    train_gen = SignLanguageGenerator(train_df, config, label_map, shuffle=True)
-    val_gen = SignLanguageGenerator(val_df, config, label_map, shuffle=False)
-    test_gen = SignLanguageGenerator(test_df, config, label_map, shuffle=False)
+    
+    # The training generator uses the directory specified in the experiment's config
+    train_gen_dir = config['landmarks_dir']
+    
+    # The validation and test generators ALWAYS use the original data directories
+    if "hands" in config['name']:
+        val_test_gen_dir = "hands_landmarks_original"
+    else: # "holistic"
+        val_test_gen_dir = "holistic_landmarks_original"
+        
+    print(f"  - Training Generator pointing to:   {train_gen_dir}")
+    print(f"  - Validation/Test pointing to:      {val_test_gen_dir}")
+    
+    train_gen = SignLanguageGenerator(train_df, config, label_map, train_gen_dir, shuffle=True)
+    val_gen = SignLanguageGenerator(val_df, config, label_map, val_test_gen_dir, shuffle=False)
+    test_gen = SignLanguageGenerator(test_df, config, label_map, val_test_gen_dir, shuffle=False)
 
     # --- 3. Build Model ---
     print("\nStep 3: Building model...")
