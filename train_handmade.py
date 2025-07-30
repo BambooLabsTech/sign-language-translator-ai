@@ -1,4 +1,4 @@
-# train_handmade_v3.py
+# train_handmade_final.py
 
 import os
 import gc
@@ -42,7 +42,7 @@ BATCH_SIZE = 32
 EPOCHS = 150
 PATIENCE = 20
 MODEL_SAVE_DIR = BASE_DIR / "models"
-MODEL_NAME = f"model_handmade_hands_{NUM_CLASSES}cls_v3.h5"
+MODEL_NAME = f"model_handmade_hands_{NUM_CLASSES}cls_final.h5"
 MODEL_SAVE_PATH = MODEL_SAVE_DIR / MODEL_NAME
 LABEL_MAP_PATH = MODEL_SAVE_DIR / f"label_map_handmade_{NUM_CLASSES}cls.npy"
 
@@ -114,18 +114,20 @@ class SignLanguageGenerator(Sequence):
                 if len(sequence_data) == 0: continue
                 
                 all_vectors = []
-                # --- START OF THE FIX ---
+                # --- START OF THE BULLETPROOF FIX ---
                 for frame in sequence_data:
-                    # Robust check:
-                    # 1. Is the frame list not empty?
-                    # 2. Is the first element a dictionary?
-                    # 3. Does that dictionary contain 'landmarks'?
-                    # 4. Are the landmarks not None?
-                    if frame and isinstance(frame, list) and isinstance(frame[0], dict) and 'landmarks' in frame[0] and frame[0]['landmarks'] is not None:
-                        all_vectors.append(frame[0]['landmarks'].flatten())
+                    landmarks = None
+                    # Safely extract landmarks, preventing any errors
+                    if isinstance(frame, list) and len(frame) > 0:
+                        hand_dict = frame[0]
+                        if isinstance(hand_dict, dict) and 'landmarks' in hand_dict:
+                            landmarks = hand_dict['landmarks']
+                    
+                    if landmarks is not None and isinstance(landmarks, np.ndarray):
+                        all_vectors.append(landmarks.flatten())
                     else:
                         all_vectors.append(np.zeros(FEATURE_DIM, dtype=np.float32))
-                # --- END OF THE FIX ---
+                # --- END OF THE BULLETPROOF FIX ---
 
                 if not all_vectors: continue
 
@@ -137,16 +139,17 @@ class SignLanguageGenerator(Sequence):
                         all_vectors[i] = last_valid_vector
                 
                 first_valid_idx = 0
-                for i, vec in enumerate(all_vectors):
-                    if not np.all(vec == 0):
-                        break
+                while first_valid_idx < len(all_vectors) and np.all(all_vectors[first_valid_idx] == 0):
                     first_valid_idx += 1
 
                 if first_valid_idx < len(all_vectors):
                     processed_vectors = all_vectors[first_valid_idx:]
                     X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
                     y_batch_list.append(row['label_id'])
-            except Exception:
+
+            except Exception as e:
+                # Add a print statement here to catch any unexpected errors
+                print(f"CRITICAL WARNING: Unexpected error processing {landmark_path}: {e}. Skipping file.")
                 continue
         
         if not X_batch_list:
@@ -162,11 +165,9 @@ class SignLanguageGenerator(Sequence):
         if self.shuffle:
             np.random.shuffle(self.indices)
 
-
 # ==============================================================================
 # 5. MODEL DEFINITION (Unchanged)
 # ==============================================================================
-
 def build_model(input_shape, num_classes):
     model = Sequential([
         Input(shape=input_shape),
@@ -181,7 +182,6 @@ def build_model(input_shape, num_classes):
         Dropout(0.3),
         Dense(num_classes, activation='softmax')
     ])
-    
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
         loss='sparse_categorical_crossentropy',
