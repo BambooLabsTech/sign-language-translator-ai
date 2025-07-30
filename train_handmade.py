@@ -1,4 +1,4 @@
-# train_handmade.py
+# train_handmade_v2.py
 
 import os
 import gc
@@ -17,6 +17,9 @@ from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLRO
 # ==============================================================================
 # 1. GPU AND ENVIRONMENT CONFIGURATION
 # ==============================================================================
+# NOTE: Update this path if your server is different
+BASE_DIR = Path('/home/kp/explore/sign-language-translator-ai') 
+
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -31,95 +34,60 @@ else:
 # ==============================================================================
 # 2. CONFIGURATION
 # ==============================================================================
-BASE_DIR = Path('/home/pandu/Documents/explore/sign-language-translator-ai')
-
 # --- DATA ---
-# Point to the original and augmented metadata files
 METADATA_ORIGINAL_PATH = BASE_DIR / "handmade_metadata.csv"
 METADATA_AUGMENTED_PATH = BASE_DIR / "handmade_augmented_metadata.csv"
-
-# Point to the corresponding landmark directories
 LANDMARKS_ORIGINAL_DIR = BASE_DIR / "landmarks_handmade" / "hands"
 LANDMARKS_AUGMENTED_DIR = BASE_DIR / "landmarks_handmade_augmented" / "hands"
 
 # --- MODEL & TRAINING ---
-# All 10 classes from your handmade dataset will be used.
 NUM_CLASSES = 10 
 BATCH_SIZE = 32
 EPOCHS = 150
-PATIENCE = 20 # For EarlyStopping
+PATIENCE = 20
 
 # --- OUTPUTS ---
 MODEL_SAVE_DIR = BASE_DIR / "models"
-MODEL_NAME = f"model_handmade_hands_{NUM_CLASSES}cls.h5"
+MODEL_NAME = f"model_handmade_hands_{NUM_CLASSES}cls_v2.h5"
 MODEL_SAVE_PATH = MODEL_SAVE_DIR / MODEL_NAME
 LABEL_MAP_PATH = MODEL_SAVE_DIR / f"label_map_handmade_{NUM_CLASSES}cls.npy"
 
 # ==============================================================================
-# 3. DATA PREPARATION
+# 3. DATA PREPARATION (Unchanged)
 # ==============================================================================
-
 def prepare_data():
-    """
-    Loads metadata, splits it into train/val/test sets, and combines with augmented data.
-    Ensures that augmentations of a video stay in the same split as the original.
-    """
     print("--- Step 1: Preparing Data ---")
-    
     if not METADATA_ORIGINAL_PATH.exists() or not METADATA_AUGMENTED_PATH.exists():
         raise FileNotFoundError("Metadata files not found. Please run generation and augmentation scripts.")
-
     df_orig = pd.read_csv(METADATA_ORIGINAL_PATH)
     df_aug = pd.read_csv(METADATA_AUGMENTED_PATH)
-    
-    # 1. Encode labels
     label_encoder = LabelEncoder()
     df_orig['label_id'] = label_encoder.fit_transform(df_orig['category'])
     print(f"Found {len(label_encoder.classes_)} classes: {label_encoder.classes_}")
-    
-    # Save the label mapping
     MODEL_SAVE_DIR.mkdir(exist_ok=True)
     np.save(LABEL_MAP_PATH, label_encoder.classes_)
     print(f"Label map saved to {LABEL_MAP_PATH}")
-
-    # 2. Split the ORIGINAL data first
-    train_val_df, test_df = train_test_split(
-        df_orig, test_size=0.15, random_state=42, stratify=df_orig['category']
-    )
-    train_df, val_df = train_test_split(
-        train_val_df, test_size=0.15, random_state=42, stratify=train_val_df['category']
-    )
-
-    # 3. Combine with augmented data
-    # Find which augmented samples belong to the training set
+    train_val_df, test_df = train_test_split(df_orig, test_size=0.15, random_state=42, stratify=df_orig['category'])
+    train_df, val_df = train_test_split(train_val_df, test_size=0.15, random_state=42, stratify=train_val_df['category'])
     train_ids = set(train_df['id'])
     train_aug_df = df_aug[df_aug['original_id'].isin(train_ids)].copy()
-    
-    # Add label_id to augmented data
     train_aug_df = train_aug_df.merge(df_orig[['id', 'label_id']], left_on='original_id', right_on='id', suffixes=('', '_y'))
     train_aug_df = train_aug_df.drop(columns=['id_y'])
-    
-    # Add a 'source' column to know which data generator to use
     train_df['source'] = 'original'
     val_df['source'] = 'original'
     test_df['source'] = 'original'
     train_aug_df['source'] = 'augmented'
-    
-    # Final combined training set
     final_train_df = pd.concat([train_df, train_aug_df], ignore_index=True)
-    
     print("\nDataset splits:")
     print(f"  - Training samples:   {len(final_train_df)} ({len(train_df)} original + {len(train_aug_df)} augmented)")
     print(f"  - Validation samples: {len(val_df)}")
     print(f"  - Test samples:       {len(test_df)}")
-    
     return final_train_df, val_df, test_df, len(label_encoder.classes_)
 
-
 # ==============================================================================
-# 4. DATA GENERATOR (Keras Sequence)
+# 4. DATA GENERATOR (Keras Sequence) - *** MODIFIED SECTION ***
 # ==============================================================================
-FEATURE_DIM = 21 * 3  # Hands-only: 21 landmarks * 3 coordinates
+FEATURE_DIM = 21 * 3
 
 class SignLanguageGenerator(Sequence):
     def __init__(self, df, batch_size, shuffle=True):
@@ -138,10 +106,9 @@ class SignLanguageGenerator(Sequence):
 
         for i in batch_indices:
             row = self.df.loc[i]
-            # Determine which directory to load from based on the 'source'
             if row['source'] == 'original':
                 base_path = LANDMARKS_ORIGINAL_DIR
-            else: # 'augmented'
+            else:
                 base_path = LANDMARKS_AUGMENTED_DIR
                 
             landmark_path = base_path / row['category'] / f"{row['id']}.npy"
@@ -152,21 +119,46 @@ class SignLanguageGenerator(Sequence):
                 sequence_data = np.load(landmark_path, allow_pickle=True)
                 if len(sequence_data) == 0: continue
                 
-                # Simplified feature extraction for hands-only data
-                frame_vectors = []
+                # --- START OF THE FIX ---
+                # 1. Extract all frame vectors, including potential zero-vectors for missing frames.
+                all_vectors = []
                 for frame in sequence_data:
                     if frame and 'landmarks' in frame[0] and frame[0]['landmarks'] is not None:
-                        frame_vectors.append(frame[0]['landmarks'].flatten())
-                    else: # Append zero vector if a frame is empty
-                        frame_vectors.append(np.zeros(FEATURE_DIM, dtype=np.float32))
+                        all_vectors.append(frame[0]['landmarks'].flatten())
+                    else:
+                        all_vectors.append(np.zeros(FEATURE_DIM, dtype=np.float32))
+                
+                if not all_vectors: continue
 
-                if frame_vectors:
-                    X_batch_list.append(np.array(frame_vectors, dtype=np.float32))
+                # 2. Perform a forward-fill to handle zero-vectors.
+                # This ensures that frames with missing landmarks are filled with the last known position,
+                # which solves the cuDNN mask issue.
+                last_valid_vector = np.zeros(FEATURE_DIM, dtype=np.float32)
+                for i in range(len(all_vectors)):
+                    if not np.all(all_vectors[i] == 0):
+                        last_valid_vector = all_vectors[i]
+                    else:
+                        all_vectors[i] = last_valid_vector
+                
+                # 3. Trim any leading zero-frames that couldn't be filled.
+                # This happens if a video starts with no landmarks detected.
+                first_valid_idx = 0
+                for i, vec in enumerate(all_vectors):
+                    if not np.all(vec == 0):
+                        break
+                    first_valid_idx += 1
+
+                # 4. If any valid frames remain, add the sequence to our batch.
+                if first_valid_idx < len(all_vectors):
+                    processed_vectors = all_vectors[first_valid_idx:]
+                    X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
                     y_batch_list.append(row['label_id'])
+                # --- END OF THE FIX ---
+
             except Exception:
                 continue
         
-        if not X_batch_list: # Failsafe for an entirely empty batch
+        if not X_batch_list:
             return np.zeros((0, 1, FEATURE_DIM)), np.zeros((0,))
 
         X_padded = tf.keras.preprocessing.sequence.pad_sequences(
@@ -179,8 +171,9 @@ class SignLanguageGenerator(Sequence):
         if self.shuffle:
             np.random.shuffle(self.indices)
 
+
 # ==============================================================================
-# 5. MODEL DEFINITION
+# 5. MODEL DEFINITION (Unchanged)
 # ==============================================================================
 
 def build_model(input_shape, num_classes):
@@ -206,33 +199,25 @@ def build_model(input_shape, num_classes):
     return model
 
 # ==============================================================================
-# 6. MAIN EXECUTION
+# 6. MAIN EXECUTION (Unchanged)
 # ==============================================================================
 
 if __name__ == "__main__":
-    # --- 1. Prepare Data ---
     train_df, val_df, test_df, num_classes = prepare_data()
-    
-    # --- 2. Create Data Generators ---
     print("\n--- Step 2: Creating Data Generators ---")
     train_gen = SignLanguageGenerator(train_df, BATCH_SIZE, shuffle=True)
     val_gen = SignLanguageGenerator(val_df, BATCH_SIZE, shuffle=False)
     test_gen = SignLanguageGenerator(test_df, BATCH_SIZE, shuffle=False)
-
-    # --- 3. Build Model ---
     print("\n--- Step 3: Building Model ---")
     input_shape = (None, FEATURE_DIM)
     model = build_model(input_shape, num_classes)
     model.summary()
-
-    # --- 4. Train Model ---
     print("\n--- Step 4: Training Model ---")
     callbacks = [
         ModelCheckpoint(filepath=MODEL_SAVE_PATH, monitor='val_accuracy', save_best_only=True, mode='max', verbose=1),
         EarlyStopping(monitor='val_accuracy', patience=PATIENCE, mode='max', verbose=1, restore_best_weights=True),
         ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=7, min_lr=1e-6, verbose=1)
     ]
-
     history = model.fit(
         train_gen,
         validation_data=val_gen,
@@ -240,12 +225,8 @@ if __name__ == "__main__":
         callbacks=callbacks,
         verbose=1
     )
-    
-    # --- 5. Evaluate Final Model ---
     print("\n--- Step 5: Evaluating on Test Set ---")
-    # Best model is already restored by EarlyStopping
     test_loss, test_accuracy = model.evaluate(test_gen, verbose=1)
-    
     print("\n--- TRAINING COMPLETE ---")
     print(f"Final Test Loss:     {test_loss:.4f}")
     print(f"Final Test Accuracy: {test_accuracy:.4f}")
