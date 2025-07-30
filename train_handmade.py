@@ -104,7 +104,6 @@ class SignLanguageGenerator(Sequence):
                 base_path = LANDMARKS_ORIGINAL_DIR
             else:
                 base_path = LANDMARKS_AUGMENTED_DIR
-                
             landmark_path = base_path / row['category'] / f"{row['id']}.npy"
 
             if not landmark_path.exists(): continue
@@ -114,23 +113,23 @@ class SignLanguageGenerator(Sequence):
                 if len(sequence_data) == 0: continue
                 
                 all_vectors = []
-                # --- START OF THE BULLETPROOF FIX ---
                 for frame in sequence_data:
                     landmarks = None
-                    # Safely extract landmarks, preventing any errors
                     if isinstance(frame, list) and len(frame) > 0:
                         hand_dict = frame[0]
                         if isinstance(hand_dict, dict) and 'landmarks' in hand_dict:
                             landmarks = hand_dict['landmarks']
-                    
                     if landmarks is not None and isinstance(landmarks, np.ndarray):
                         all_vectors.append(landmarks.flatten())
                     else:
                         all_vectors.append(np.zeros(FEATURE_DIM, dtype=np.float32))
-                # --- END OF THE BULLETPROOF FIX ---
+                
+                # Check for any valid data BEFORE back-filling or trimming
+                if not np.any(all_vectors): # This is a fast way to check if the whole array is zeros
+                    # This file is one of the 340 bad apples. Skip it cleanly.
+                    continue
 
-                if not all_vectors: continue
-
+                # --- This logic now only runs on files guaranteed to have some data ---
                 last_valid_vector = np.zeros(FEATURE_DIM, dtype=np.float32)
                 for i in range(len(all_vectors)):
                     if not np.all(all_vectors[i] == 0):
@@ -141,23 +140,20 @@ class SignLanguageGenerator(Sequence):
                 first_valid_idx = 0
                 while first_valid_idx < len(all_vectors) and np.all(all_vectors[first_valid_idx] == 0):
                     first_valid_idx += 1
-
-                if first_valid_idx < len(all_vectors):
-                    processed_vectors = all_vectors[first_valid_idx:]
-                    X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
-                    y_batch_list.append(row['label_id'])
-                    
-                if len(processed_vectors) == 0:
-                    print(f"\nWARNING: Skipped zero-length sequence after processing: {landmark_path}")
-                    continue
+                
+                # We can now be 100% certain that processed_vectors will not be empty
+                processed_vectors = all_vectors[first_valid_idx:]
+                X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
+                y_batch_list.append(row['label_id'])
 
             except Exception as e:
-                # Add a print statement here to catch any unexpected errors
                 print(f"CRITICAL WARNING: Unexpected error processing {landmark_path}: {e}. Skipping file.")
                 continue
         
+        # If the entire batch was bad files, this list will be empty.
         if not X_batch_list:
-            return np.zeros((0, 1, FEATURE_DIM)), np.zeros((0,))
+            # Return an empty batch that Keras can safely ignore.
+            return np.zeros((0, 0, FEATURE_DIM)), np.zeros((0,))
 
         X_padded = tf.keras.preprocessing.sequence.pad_sequences(
             X_batch_list, dtype='float32', padding='post', truncating='post'
