@@ -146,6 +146,10 @@ class SignLanguageGenerator(Sequence):
                     processed_vectors = all_vectors[first_valid_idx:]
                     X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
                     y_batch_list.append(row['label_id'])
+                    
+                if len(processed_vectors) == 0:
+                    print(f"\nWARNING: Skipped zero-length sequence after processing: {landmark_path}")
+                    continue
 
             except Exception as e:
                 # Add a print statement here to catch any unexpected errors
