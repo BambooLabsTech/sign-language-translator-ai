@@ -1,4 +1,4 @@
-# train_handmade_v2.py
+# train_handmade_v3.py
 
 import os
 import gc
@@ -17,7 +17,6 @@ from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLRO
 # ==============================================================================
 # 1. GPU AND ENVIRONMENT CONFIGURATION
 # ==============================================================================
-# NOTE: Update this path if your server is different
 BASE_DIR = Path('/home/kp/explore/sign-language-translator-ai') 
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
@@ -32,23 +31,18 @@ else:
     print("No GPUs found. Running on CPU.")
 
 # ==============================================================================
-# 2. CONFIGURATION
+# 2. CONFIGURATION (Unchanged)
 # ==============================================================================
-# --- DATA ---
 METADATA_ORIGINAL_PATH = BASE_DIR / "handmade_metadata.csv"
 METADATA_AUGMENTED_PATH = BASE_DIR / "handmade_augmented_metadata.csv"
 LANDMARKS_ORIGINAL_DIR = BASE_DIR / "landmarks_handmade" / "hands"
 LANDMARKS_AUGMENTED_DIR = BASE_DIR / "landmarks_handmade_augmented" / "hands"
-
-# --- MODEL & TRAINING ---
 NUM_CLASSES = 10 
 BATCH_SIZE = 32
 EPOCHS = 150
 PATIENCE = 20
-
-# --- OUTPUTS ---
 MODEL_SAVE_DIR = BASE_DIR / "models"
-MODEL_NAME = f"model_handmade_hands_{NUM_CLASSES}cls_v2.h5"
+MODEL_NAME = f"model_handmade_hands_{NUM_CLASSES}cls_v3.h5"
 MODEL_SAVE_PATH = MODEL_SAVE_DIR / MODEL_NAME
 LABEL_MAP_PATH = MODEL_SAVE_DIR / f"label_map_handmade_{NUM_CLASSES}cls.npy"
 
@@ -58,7 +52,7 @@ LABEL_MAP_PATH = MODEL_SAVE_DIR / f"label_map_handmade_{NUM_CLASSES}cls.npy"
 def prepare_data():
     print("--- Step 1: Preparing Data ---")
     if not METADATA_ORIGINAL_PATH.exists() or not METADATA_AUGMENTED_PATH.exists():
-        raise FileNotFoundError("Metadata files not found. Please run generation and augmentation scripts.")
+        raise FileNotFoundError("Metadata files not found.")
     df_orig = pd.read_csv(METADATA_ORIGINAL_PATH)
     df_aug = pd.read_csv(METADATA_AUGMENTED_PATH)
     label_encoder = LabelEncoder()
@@ -119,20 +113,22 @@ class SignLanguageGenerator(Sequence):
                 sequence_data = np.load(landmark_path, allow_pickle=True)
                 if len(sequence_data) == 0: continue
                 
-                # --- START OF THE FIX ---
-                # 1. Extract all frame vectors, including potential zero-vectors for missing frames.
                 all_vectors = []
+                # --- START OF THE FIX ---
                 for frame in sequence_data:
-                    if frame and 'landmarks' in frame[0] and frame[0]['landmarks'] is not None:
+                    # Robust check:
+                    # 1. Is the frame list not empty?
+                    # 2. Is the first element a dictionary?
+                    # 3. Does that dictionary contain 'landmarks'?
+                    # 4. Are the landmarks not None?
+                    if frame and isinstance(frame, list) and isinstance(frame[0], dict) and 'landmarks' in frame[0] and frame[0]['landmarks'] is not None:
                         all_vectors.append(frame[0]['landmarks'].flatten())
                     else:
                         all_vectors.append(np.zeros(FEATURE_DIM, dtype=np.float32))
-                
+                # --- END OF THE FIX ---
+
                 if not all_vectors: continue
 
-                # 2. Perform a forward-fill to handle zero-vectors.
-                # This ensures that frames with missing landmarks are filled with the last known position,
-                # which solves the cuDNN mask issue.
                 last_valid_vector = np.zeros(FEATURE_DIM, dtype=np.float32)
                 for i in range(len(all_vectors)):
                     if not np.all(all_vectors[i] == 0):
@@ -140,21 +136,16 @@ class SignLanguageGenerator(Sequence):
                     else:
                         all_vectors[i] = last_valid_vector
                 
-                # 3. Trim any leading zero-frames that couldn't be filled.
-                # This happens if a video starts with no landmarks detected.
                 first_valid_idx = 0
                 for i, vec in enumerate(all_vectors):
                     if not np.all(vec == 0):
                         break
                     first_valid_idx += 1
 
-                # 4. If any valid frames remain, add the sequence to our batch.
                 if first_valid_idx < len(all_vectors):
                     processed_vectors = all_vectors[first_valid_idx:]
                     X_batch_list.append(np.array(processed_vectors, dtype=np.float32))
                     y_batch_list.append(row['label_id'])
-                # --- END OF THE FIX ---
-
             except Exception:
                 continue
         
@@ -201,7 +192,6 @@ def build_model(input_shape, num_classes):
 # ==============================================================================
 # 6. MAIN EXECUTION (Unchanged)
 # ==============================================================================
-
 if __name__ == "__main__":
     train_df, val_df, test_df, num_classes = prepare_data()
     print("\n--- Step 2: Creating Data Generators ---")
