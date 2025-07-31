@@ -33,20 +33,19 @@ LANDMARKS_DIR = COMBINED_DATASET_DIR / "landmarks_hands"
 
 # --- Model & Label Map Paths ---
 MODEL_SAVE_DIR = BASE_DIR / "models"
-MODEL_NAME = "model_combined_hands_17cls_v1.h5" # Name of the SAVED model
+MODEL_NAME = "model_combined_hands_17cls_v1.h5"
 MODEL_PATH = MODEL_SAVE_DIR / MODEL_NAME
 LABEL_MAP_PATH = MODEL_SAVE_DIR / "label_map_combined_17cls.npy"
 
 # --- Feature Extraction ---
 FEATURE_DIM = 21 * 3
-BATCH_SIZE = 32 # Use the same batch size for consistency
+BATCH_SIZE = 32
 
-# The same generator class from your training script is needed here.
 # ==============================================================================
-# 4. DATA GENERATOR (Keras Sequence)
+# 4. DATA GENERATOR (Keras Sequence) - UNCHANGED from previous working script
 # ==============================================================================
 class SignLanguageGenerator(Sequence):
-    def __init__(self, df, landmarks_base_dir, batch_size, feature_dim, shuffle=False): # Shuffle is OFF for evaluation
+    def __init__(self, df, landmarks_base_dir, batch_size, feature_dim, shuffle=False):
         self.df, self.landmarks_base_dir, self.batch_size, self.feature_dim, self.shuffle = df, landmarks_base_dir, batch_size, feature_dim, shuffle
         self.indices = self.df.index.tolist()
         self.on_epoch_end()
@@ -77,12 +76,11 @@ class SignLanguageGenerator(Sequence):
             except Exception: continue
         if not X_batch_list: return np.zeros((0, 0, self.feature_dim)), np.zeros((0,)), np.array([])
         X_padded = tf.keras.preprocessing.sequence.pad_sequences(X_batch_list, dtype='float32', padding='post', truncating='post')
-        # Return source as well to make evaluation easier
         return X_padded, np.array(y_batch_list, dtype=np.int64), np.array(source_list)
-    def on_epoch_end(self): pass # No need to shuffle for evaluation
+    def on_epoch_end(self): pass
 
 # ==============================================================================
-# 5. MAIN EVALUATION SCRIPT
+# 5. MAIN EVALUATION SCRIPT (CORRECTED)
 # ==============================================================================
 def main():
     print("--- Starting Standalone Model Evaluation ---")
@@ -92,7 +90,8 @@ def main():
     if not MODEL_PATH.exists():
         print(f"FATAL: Model file not found. Please ensure the path is correct.")
         return
-    model = load_model(MODEL_PATH)
+    # We compile=False here because we don't need the optimizer state for inference.
+    model = load_model(MODEL_PATH, compile=False) 
 
     print(f"Loading label map from: {LABEL_MAP_PATH}")
     class_names = np.load(LABEL_MAP_PATH, allow_pickle=True)
@@ -101,71 +100,61 @@ def main():
     df = pd.read_csv(METADATA_PATH)
     
     # Filter for the test set
-    test_df = df[df['split'] == 'test'].reset_index(drop=True)
+    test_df_full = df[df['split'] == 'test'].reset_index(drop=True)
     
-    # Re-create the label IDs to be safe
+    # --- *** THE FIX IS HERE *** ---
+    # Filter the test dataframe to ONLY include the classes the model was trained on.
+    print(f"\nOriginal test set has {len(test_df_full)} samples.")
+    test_df = test_df_full[test_df_full['category'].isin(class_names)].reset_index(drop=True)
+    print(f"Filtered test set to {len(test_df)} samples belonging to the {len(class_names)} trained classes.")
+    # --- *** END OF FIX *** ---
+
+    # Re-create the label IDs now that the df is clean
     label_encoder = LabelEncoder().fit(class_names)
     test_df['label_id'] = label_encoder.transform(test_df['category'])
     
     # --- Step 2: Create Test Generator ---
-    print("Creating data generator for the test set...")
+    print("\nCreating data generator for the filtered test set...")
     test_gen = SignLanguageGenerator(test_df, LANDMARKS_DIR, BATCH_SIZE, FEATURE_DIM)
 
     # --- Step 3: Robust Prediction Loop ---
     print("Making predictions on test set (this may take a moment)...")
-    all_y_true = []
-    all_y_pred = []
-    all_sources = []
+    all_y_true, all_y_pred, all_sources = [], [], []
 
     for i in tqdm(range(len(test_gen)), desc="Evaluating Batches"):
         X_batch, y_batch, source_batch = test_gen[i]
-        
-        # Skip if the generator produced an empty batch
-        if X_batch.shape[0] == 0:
-            continue
-            
+        if X_batch.shape[0] == 0: continue
         y_pred_probs = model.predict(X_batch, verbose=0)
         y_pred_batch = np.argmax(y_pred_probs, axis=1)
-        
         all_y_true.extend(y_batch)
         all_y_pred.extend(y_pred_batch)
         all_sources.extend(source_batch)
 
-    # Convert to numpy arrays for easy filtering
-    all_y_true = np.array(all_y_true)
-    all_y_pred = np.array(all_y_pred)
-    all_sources = np.array(all_sources)
+    all_y_true, all_y_pred, all_sources = np.array(all_y_true), np.array(all_y_pred), np.array(all_sources)
+    print(f"\nSuccessfully processed {len(all_y_true)} out of {len(test_df)} filtered test samples.")
 
-    print(f"\nSuccessfully processed {len(all_y_true)} out of {len(test_df)} test samples.")
-
-    # --- Step 4: Detailed Evaluation ---
+    # --- Step 4: Detailed Evaluation (Slightly modified for clarity) ---
     print("\n" + "="*60 + "\n---              IN-DEPTH TEST SET EVALUATION              ---\n" + "="*60)
 
-    # 1. Overall Performance
     print("\n\n--- [1/3] Overall Performance (Mixed HQ + LQ Data) ---")
     print(f"Overall Accuracy: {accuracy_score(all_y_true, all_y_pred):.4f}")
     print(classification_report(all_y_true, all_y_pred, target_names=class_names, zero_division=0))
 
-    # 2. High-Quality Performance
-    hq_mask = (all_sources == 'handmade')
+    hq_mask, lq_mask = (all_sources == 'handmade'), (all_sources == 'wlasl')
+    
     if np.any(hq_mask):
         print("\n\n--- [2/3] Performance on High-Quality (Handmade) Data ONLY ---")
         print(f"HQ Test Accuracy: {accuracy_score(all_y_true[hq_mask], all_y_pred[hq_mask]):.4f}")
         print(classification_report(all_y_true[hq_mask], all_y_pred[hq_mask], target_names=class_names, zero_division=0))
-    else:
-        print("\nNo high-quality samples were processed in the test set.")
+    else: print("\nNo high-quality samples were processed in the test set.")
         
-    # 3. Low-Quality Performance
-    lq_mask = (all_sources == 'wlasl')
     if np.any(lq_mask):
         print("\n\n--- [3/3] Performance on Low-Quality (WLASL) Data ONLY ---")
         print(f"LQ Test Accuracy: {accuracy_score(all_y_true[lq_mask], all_y_pred[lq_mask]):.4f}")
         print(classification_report(all_y_true[lq_mask], all_y_pred[lq_mask], target_names=class_names, zero_division=0))
-    else:
-        print("\nNo low-quality samples were processed in the test set.")
+    else: print("\nNo low-quality samples were processed in the test set.")
 
     print("="*60 + "\n---                 EVALUATION SCRIPT COMPLETE               ---\n" + "="*60)
-
 
 if __name__ == "__main__":
     main()
