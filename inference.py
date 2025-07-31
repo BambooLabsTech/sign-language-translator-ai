@@ -43,7 +43,7 @@ def process_video_to_landmarks(video_path: Path) -> list:
     # We use max_num_hands=1 for isolated sign inference, assuming one dominant hand.
     hands_model = mp_hands.Hands(
         static_image_mode=False,
-        max_num_hands=1,
+        max_num_hands=2,
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5
     )
