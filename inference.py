@@ -14,8 +14,8 @@ import argparse
 # Update them if they are in a different location.
 BASE_DIR = Path.cwd() # Assumes script is in the main project directory
 MODEL_DIR = BASE_DIR / "models"
-MODEL_PATH = MODEL_DIR / "model_combined_hands_17cls_v1.h5"
-LABEL_MAP_PATH = MODEL_DIR / "label_map_combined_17cls.npy"
+MODEL_PATH = MODEL_DIR / "model_handmade_hands_10cls_final.h5"
+LABEL_MAP_PATH = MODEL_DIR / "label_map_handmade_10cls.npy"
 
 # --- Feature Extraction ---
 # This must match the feature dimension used during training.
